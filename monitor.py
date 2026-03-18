@@ -1,0 +1,1117 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Jira Monitor - Bağımsız Masaüstü Uygulaması
+Python + Tkinter ile hazırlanmıştır.
+"""
+
+import tkinter as tk
+from tkinter import ttk, messagebox, scrolledtext
+import json
+import os
+import threading
+import time
+from datetime import datetime
+import urllib.request
+import urllib.parse
+import base64
+
+
+class JiraClient:
+    """Jira REST API istemcisi"""
+    
+    def __init__(self, server_url, username, api_token):
+        self.server_url = server_url.rstrip('/')
+        self.username = username
+        self.api_token = api_token
+        self.auth_header = self._create_auth_header()
+    
+    def _create_auth_header(self):
+        """Basic auth header oluştur"""
+        credentials = f"{self.username}:{self.api_token}".encode('utf-8')
+        encoded = base64.b64encode(credentials).decode('utf-8')
+        return f"Basic {encoded}"
+    
+    def _make_request(self, endpoint, params=None):
+        """HTTP isteği yap"""
+        url = f"{self.server_url}{endpoint}"
+        if params:
+            url += "?" + urllib.parse.urlencode(params)
+        
+        try:
+            request = urllib.request.Request(url)
+            request.add_header("Authorization", self.auth_header)
+            request.add_header("Content-Type", "application/json")
+            
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return json.loads(response.read().decode('utf-8'))
+        except urllib.error.HTTPError as e:
+            return {"error": f"HTTP {e.code}: {e.reason}"}
+        except urllib.error.URLError as e:
+            return {"error": f"Bağlantı hatası: {e.reason}"}
+        except Exception as e:
+            return {"error": f"Bilinmeyen hata: {str(e)}"}
+    
+    def search_issues(self, jql, start=0, max_results=100):
+        """JQL ile issue arama"""
+        params = {
+            "jql": jql,
+            "start": start,
+            "maxResults": max_results,
+            "fields": "summary,description,assignee,creator,project,status,created,updated,priority,components,labels,reporter,issuetype,updated"
+        }
+        return self._make_request("/rest/api/2/search", params)
+    
+    def get_issue(self, issue_key):
+        """Tek issue detayı"""
+        return self._make_request(f"/rest/api/2/issue/{issue_key}")
+    
+    def get_issue_comments(self, issue_key):
+        """Issue yorumları"""
+        return self._make_request(f"/rest/api/2/issue/{issue_key}?fields=comment")
+
+    def add_comment(self, issue_key, body):
+        """Yorum ekle"""
+        url = f"{self.server_url}/rest/api/2/issue/{issue_key}/comment"
+        data = json.dumps({"body": body}).encode("utf-8")
+        try:
+            req = urllib.request.Request(url, data=data, method="POST")
+            req.add_header("Authorization", self.auth_header)
+            req.add_header("Content-Type", "application/json")
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            return {"error": f"HTTP {e.code}: {e.reason}"}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def update_comment(self, issue_key, comment_id, body):
+        """Yorum güncelle"""
+        url = f"{self.server_url}/rest/api/2/issue/{issue_key}/comment/{comment_id}"
+        data = json.dumps({"body": body}).encode("utf-8")
+        try:
+            req = urllib.request.Request(url, data=data, method="PUT")
+            req.add_header("Authorization", self.auth_header)
+            req.add_header("Content-Type", "application/json")
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            return {"error": f"HTTP {e.code}: {e.reason}"}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def get_attachments(self, issue_key):
+        """Dosya eklerini getir"""
+        result = self._make_request(f"/rest/api/2/issue/{issue_key}?fields=attachment")
+        if "error" in result:
+            return result
+        return result.get("fields", {}).get("attachment", [])
+
+    def get_current_user(self):
+        """Giriş yapan kullanıcıyı getir"""
+        return self._make_request("/rest/api/2/myself")
+
+    def download_attachment(self, url, dest_path):
+        """Eki indir"""
+        try:
+            req = urllib.request.Request(url)
+            req.add_header("Authorization", self.auth_header)
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                with open(dest_path, "wb") as f:
+                    f.write(resp.read())
+            return None
+        except Exception as e:
+            return str(e)
+
+
+class ConfigManager:
+    """Ayarları yöneten sınıf"""
+    
+    def __init__(self):
+        self.config_file = os.path.join(os.path.expanduser("~"), ".jira_monitor_config.json")
+        self.config = self._load_config()
+    
+    def _load_config(self):
+        """Ayarları yükle"""
+        try:
+            if os.path.exists(self.config_file):
+                with open(self.config_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except:
+            pass
+        return {
+            "server_url": "https://jira.gelirler.gov.tr",
+            "username": "",
+            "api_token": "",
+            "refresh_interval": 120,
+            "default_users": "haktan.atamer,ayse.aydogdu,yasarcan.tak,engin.talay,umutcan.hazir,furkan.yilmaz,sebnem.manav,feride.kepenek,yunus.akyildirim,ersen.gultepe,firat.ciftci,murat.kanbes",
+            "default_projects": "EVDBS,EPDK,Vedop3_VT,KONF",
+            "default_status": "OPEN,'In Progress',Reopened"
+        }
+    
+    def save_config(self, config):
+        """Ayarları kaydet"""
+        self.config = config
+        with open(self.config_file, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+    
+    def get(self, key, default=None):
+        """Ayar değeri al"""
+        return self.config.get(key, default)
+    
+    def set(self, key, value):
+        """Ayar değeri set et"""
+        self.config[key] = value
+
+
+class SettingsDialog:
+    """Ayarlar penceresi"""
+    
+    def __init__(self, parent, config_manager):
+        self.parent = parent
+        self.config_manager = config_manager
+        self.result = None
+        
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title("Jira Monitor - Ayarlar")
+        self.dialog.geometry("650x550")
+        self.dialog.resizable(True, True)
+        self.dialog.transient(parent)
+        self.dialog.grab_set()
+        
+        # Modern stil
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure('TLabel', font=('Segoe UI', 10))
+        style.configure('TEntry', font=('Segoe UI', 10))
+        style.configure('TButton', font=('Segoe UI', 10))
+        style.configure('Header.TLabel', font=('Segoe UI', 12, 'bold'))
+        
+        self._create_widgets()
+    
+    def _create_widgets(self):
+        """Widget'ları oluştur"""
+        # Ana frame
+        main_frame = ttk.Frame(self.dialog, padding="15")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Notebook (sekmeler)
+        notebook = ttk.Notebook(main_frame)
+        notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+        
+        # Bağlantı sekmesi
+        conn_frame = ttk.Frame(notebook, padding="15")
+        notebook.add(conn_frame, text="  Bağlantı  ")
+        
+        ttk.Label(conn_frame, text="Jira Sunucu URL:", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
+        self.server_url = ttk.Entry(conn_frame, width=60, font=('Segoe UI', 10))
+        self.server_url.pack(fill=tk.X, pady=(0, 15))
+        self.server_url.insert(0, self.config_manager.get("server_url", ""))
+        
+        ttk.Label(conn_frame, text="Kullanıcı Adı (e-posta):", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
+        self.username = ttk.Entry(conn_frame, width=60, font=('Segoe UI', 10))
+        self.username.pack(fill=tk.X, pady=(0, 15))
+        self.username.insert(0, self.config_manager.get("username", ""))
+        
+        ttk.Label(conn_frame, text="API Token:", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
+        self.api_token = ttk.Entry(conn_frame, width=60, font=('Segoe UI', 10), show="*")
+        self.api_token.pack(fill=tk.X, pady=(0, 15))
+        self.api_token.insert(0, self.config_manager.get("api_token", ""))
+        
+        # Filtreler sekmesi
+        filter_frame = ttk.Frame(notebook, padding="15")
+        notebook.add(filter_frame, text="  Filtreler  ")
+        
+        ttk.Label(filter_frame, text="Yenileme Süresi (saniye):", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
+        self.refresh_interval = ttk.Entry(filter_frame, width=15, font=('Segoe UI', 10))
+        self.refresh_interval.pack(anchor=tk.W, pady=(0, 15))
+        self.refresh_interval.insert(0, str(self.config_manager.get("refresh_interval", 120)))
+        
+        ttk.Label(filter_frame, text="Varsayılan Kullanıcılar (virgülle ayırın):", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
+        self.default_users = scrolledtext.ScrolledText(filter_frame, width=60, height=5, font=('Segoe UI', 10))
+        self.default_users.pack(fill=tk.X, pady=(0, 15))
+        self.default_users.insert("1.0", self.config_manager.get("default_users", ""))
+        
+        ttk.Label(filter_frame, text="Varsayılan Projeler (virgülle ayırın):", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
+        self.default_projects = scrolledtext.ScrolledText(filter_frame, width=60, height=3, font=('Segoe UI', 10))
+        self.default_projects.pack(fill=tk.X, pady=(0, 15))
+        self.default_projects.insert("1.0", self.config_manager.get("default_projects", ""))
+        
+        ttk.Label(filter_frame, text="Varsayılan Status (virgülle ayırın):", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
+        self.default_status = ttk.Entry(filter_frame, width=60, font=('Segoe UI', 10))
+        self.default_status.pack(anchor=tk.W, pady=(0, 15))
+        self.default_status.insert(0, self.config_manager.get("default_status", ""))
+        
+        # Butonlar
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X)
+        
+        ttk.Button(button_frame, text="Kaydet", command=self._save, width=15).pack(side=tk.RIGHT, padx=(5, 0))
+        ttk.Button(button_frame, text="İptal", command=self._cancel, width=15).pack(side=tk.RIGHT, padx=5)
+    
+    def _save(self):
+        """Kaydet butonu"""
+        config = {
+            "server_url": self.server_url.get().strip(),
+            "username": self.username.get().strip(),
+            "api_token": self.api_token.get().strip(),
+            "refresh_interval": int(self.refresh_interval.get()),
+            "default_users": self.default_users.get("1.0", tk.END).strip(),
+            "default_projects": self.default_projects.get("1.0", tk.END).strip(),
+            "default_status": self.default_status.get().strip()
+        }
+        self.config_manager.save_config(config)
+        self.result = config
+        self.dialog.destroy()
+    
+    def _cancel(self):
+        """İptal butonu"""
+        self.dialog.destroy()
+
+
+def _jira_to_text(text):
+    """Jira wiki markup / basit HTML'i okunabilir metne çevirir (fallback)"""
+    if not text:
+        return ""
+    import re
+    text = re.sub(r'\{color[^}]*\}(.*?)\{color\}', r'\1', text, flags=re.DOTALL)
+    text = re.sub(r'\{[^}]+\}', '', text)
+    text = re.sub(r'!([^|!]+)(?:\|[^!]*)!', r'[Görsel: \1]', text)
+    text = re.sub(r'\[([^\|]+)\|([^\]]+)\]', r'\1 (\2)', text)
+    text = re.sub(r'h[1-6]\.\s*', '', text)
+    text = re.sub(r'\*\*?(.*?)\*\*?', r'\1', text)
+    text = re.sub(r'_(.*?)_', r'\1', text)
+    text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<[^>]+>', '', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
+
+def render_jira_markup(widget, text):
+    """
+    Jira wiki markup'ı Tkinter Text widget'ına tag'lerle render eder.
+    widget: tk.Text (NORMAL state'de olmalı)
+    """
+    import re, webbrowser
+
+    widget.delete("1.0", tk.END)
+
+    # Tag tanımları
+    widget.tag_configure("h1", font=("Segoe UI", 16, "bold"), spacing3=4)
+    widget.tag_configure("h2", font=("Segoe UI", 14, "bold"), spacing3=3)
+    widget.tag_configure("h3", font=("Segoe UI", 12, "bold"), spacing3=2)
+    widget.tag_configure("bold", font=("Segoe UI", 10, "bold"))
+    widget.tag_configure("italic", font=("Segoe UI", 10, "italic"))
+    widget.tag_configure("underline", underline=True)
+    widget.tag_configure("strike", overstrike=True)
+    widget.tag_configure("code", font=("Courier New", 9), background="#f0f0f0")
+    widget.tag_configure("bullet", lmargin1=20, lmargin2=30)
+    widget.tag_configure("link", foreground="#0078d7", underline=True)
+    widget.tag_configure("table_header", font=("Segoe UI", 10, "bold"), background="#e0e0e0")
+    widget.tag_configure("table_cell", background="#f8f8f8")
+    widget.tag_configure("table_alt", background="#ffffff")
+
+    if not text:
+        return
+
+    # Satır satır işle
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+
+        # Kod bloğu {code} ... {code}
+        if re.match(r'\{code[^}]*\}', line, re.IGNORECASE):
+            i += 1
+            code_lines = []
+            while i < len(lines) and not re.match(r'\{code\}', lines[i], re.IGNORECASE):
+                code_lines.append(lines[i])
+                i += 1
+            widget.insert(tk.END, "\n".join(code_lines) + "\n", "code")
+            i += 1
+            continue
+
+        # Tablo satırı ||...|| veya |...|
+        if line.strip().startswith("||") or (line.strip().startswith("|") and line.strip().endswith("|")):
+            is_header = line.strip().startswith("||")
+            cells = re.split(r'\|\||\|', line.strip())
+            cells = [c for c in cells if c != ""]
+            tag = "table_header" if is_header else ("table_cell" if i % 2 == 0 else "table_alt")
+            for j, cell in enumerate(cells):
+                widget.insert(tk.END, f" {cell.strip()} ", tag)
+                if j < len(cells) - 1:
+                    widget.insert(tk.END, " │ ", tag)
+            widget.insert(tk.END, "\n")
+            i += 1
+            continue
+
+        # Başlıklar h1. h2. h3.
+        m = re.match(r'^h([1-3])\.\s*(.*)', line)
+        if m:
+            tag = f"h{m.group(1)}"
+            widget.insert(tk.END, m.group(2) + "\n", tag)
+            i += 1
+            continue
+
+        # Liste öğeleri * - #
+        m = re.match(r'^([*#\-]+)\s+(.*)', line)
+        if m:
+            prefix = "• " if m.group(1)[0] in "*-" else f"{i}. "
+            _insert_inline(widget, prefix + m.group(2) + "\n", "bullet")
+            i += 1
+            continue
+
+        # Normal satır — inline markup işle
+        _insert_inline(widget, line + "\n")
+        i += 1
+
+
+def _insert_inline(widget, text, base_tag=None):
+    """Satır içi markup'ı (bold, italic, link vb.) parse edip ekler"""
+    import re, webbrowser
+
+    # Token pattern: bold, italic, underline, strike, monospace, link, plain
+    pattern = re.compile(
+        r'\*([^*]+)\*'           # *bold*
+        r'|_([^_]+)_'            # _italic_
+        r'|\+([^+]+)\+'          # +underline+
+        r'|-([^-]+)-'            # -strike-
+        r'|\{\{([^}]+)\}\}'      # {{monospace}}
+        r'|\[([^\|]+)\|([^\]]+)\]'  # [text|url]
+        r'|\[~([^\]]+)\]'        # [~username]
+    )
+
+    pos = 0
+    for m in pattern.finditer(text):
+        # Önceki düz metin
+        if m.start() > pos:
+            tags = (base_tag,) if base_tag else ()
+            widget.insert(tk.END, text[pos:m.start()], tags)
+
+        if m.group(1) is not None:
+            tags = ("bold", base_tag) if base_tag else ("bold",)
+            widget.insert(tk.END, m.group(1), tags)
+        elif m.group(2) is not None:
+            tags = ("italic", base_tag) if base_tag else ("italic",)
+            widget.insert(tk.END, m.group(2), tags)
+        elif m.group(3) is not None:
+            tags = ("underline", base_tag) if base_tag else ("underline",)
+            widget.insert(tk.END, m.group(3), tags)
+        elif m.group(4) is not None:
+            tags = ("strike", base_tag) if base_tag else ("strike",)
+            widget.insert(tk.END, m.group(4), tags)
+        elif m.group(5) is not None:
+            tags = ("code", base_tag) if base_tag else ("code",)
+            widget.insert(tk.END, m.group(5), tags)
+        elif m.group(6) is not None and m.group(7) is not None:
+            link_text, url = m.group(6), m.group(7)
+            tag_name = f"link_{widget.index(tk.END).replace('.', '_')}"
+            widget.tag_configure(tag_name, foreground="#0078d7", underline=True)
+            widget.tag_bind(tag_name, "<Button-1>", lambda e, u=url: webbrowser.open(u))
+            widget.tag_bind(tag_name, "<Enter>", lambda e: widget.configure(cursor="hand2"))
+            widget.tag_bind(tag_name, "<Leave>", lambda e: widget.configure(cursor="arrow"))
+            widget.insert(tk.END, link_text, (tag_name, "link"))
+        elif m.group(8) is not None:
+            tags = ("bold", base_tag) if base_tag else ("bold",)
+            widget.insert(tk.END, f"@{m.group(8)}", tags)
+
+        pos = m.end()
+
+    # Kalan düz metin
+    if pos < len(text):
+        tags = (base_tag,) if base_tag else ()
+        widget.insert(tk.END, text[pos:], tags)
+
+
+class IssueDetailDialog:
+    """Issue detay penceresi — Detaylar / Yorumlar / Ekler tabları"""
+
+    def __init__(self, parent, jira_client, issue_key, current_user=None):
+        self.parent = parent
+        self.jira_client = jira_client
+        self.issue_key = issue_key
+        self.current_user = current_user  # {"accountId": ..., "displayName": ...}
+        self._comments = []  # cache
+
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title(f"Issue: {issue_key}")
+        self.dialog.geometry("860x700")
+        self.dialog.resizable(True, True)
+        self.dialog.transient(parent)
+
+        self._create_widgets()
+        self._load_all()
+
+    # ------------------------------------------------------------------ UI --
+    def _create_widgets(self):
+        main = ttk.Frame(self.dialog, padding=10)
+        main.pack(fill=tk.BOTH, expand=True)
+
+        # Başlık
+        self.lbl_key = ttk.Label(main, text="Yükleniyor…", font=("Segoe UI", 13, "bold"))
+        self.lbl_key.pack(anchor=tk.W)
+        self.lbl_summary = ttk.Label(main, text="", font=("Segoe UI", 11), wraplength=820, justify=tk.LEFT)
+        self.lbl_summary.pack(anchor=tk.W, pady=(2, 8))
+
+        # Meta bilgiler (grid)
+        meta = ttk.Frame(main)
+        meta.pack(fill=tk.X, pady=(0, 8))
+        labels = ["Status:", "Assignee:", "Reporter:", "Priority:", "Created:", "Updated:", "Components:", "Labels:"]
+        self._meta_vars = {}
+        for i, lbl in enumerate(labels):
+            row, col = divmod(i, 2)
+            ttk.Label(meta, text=lbl, font=("Segoe UI", 9, "bold")).grid(row=row, column=col*2, sticky=tk.W, padx=(0 if col==0 else 20, 4), pady=2)
+            var = tk.StringVar()
+            e = ttk.Entry(meta, textvariable=var, state="readonly", width=35, font=("Segoe UI", 9))
+            e.grid(row=row, column=col*2+1, sticky=tk.W, pady=2)
+            self._meta_vars[lbl] = var
+
+        # Notebook
+        nb = ttk.Notebook(main)
+        nb.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+
+        # --- Tab 1: Detaylar ---
+        tab_detail = ttk.Frame(nb, padding=5)
+        nb.add(tab_detail, text="  Detaylar  ")
+        ttk.Label(tab_detail, text="Açıklama", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W)
+        self.txt_desc = tk.Text(tab_detail, wrap=tk.WORD, font=("Segoe UI", 10), state=tk.DISABLED, cursor="arrow")
+        sb = ttk.Scrollbar(tab_detail, command=self.txt_desc.yview)
+        self.txt_desc.configure(yscrollcommand=sb.set)
+        self.txt_desc.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # --- Tab 2: Yorumlar ---
+        tab_comments = ttk.Frame(nb, padding=5)
+        nb.add(tab_comments, text="  Yorumlar  ")
+        self._build_comments_tab(tab_comments)
+
+        # --- Tab 3: Ekler ---
+        tab_attach = ttk.Frame(nb, padding=5)
+        nb.add(tab_attach, text="  Dosya Ekleri  ")
+        self._build_attachments_tab(tab_attach)
+
+        # Kapat
+        ttk.Button(main, text="Kapat", command=self.dialog.destroy).pack(anchor=tk.E, pady=(6, 0))
+
+    def _build_comments_tab(self, parent):
+        # Yorum listesi
+        list_frame = ttk.Frame(parent)
+        list_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.comments_canvas = tk.Canvas(list_frame, highlightthickness=0)
+        vsb = ttk.Scrollbar(list_frame, orient="vertical", command=self.comments_canvas.yview)
+        self.comments_canvas.configure(yscrollcommand=vsb.set)
+        self.comments_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.comments_inner = ttk.Frame(self.comments_canvas)
+        self._canvas_window = self.comments_canvas.create_window((0, 0), window=self.comments_inner, anchor="nw")
+        self.comments_inner.bind("<Configure>", lambda e: self.comments_canvas.configure(
+            scrollregion=self.comments_canvas.bbox("all")))
+        self.comments_canvas.bind("<Configure>", lambda e: self.comments_canvas.itemconfig(
+            self._canvas_window, width=e.width))
+
+        # Yeni yorum alanı
+        sep = ttk.Separator(parent, orient="horizontal")
+        sep.pack(fill=tk.X, pady=6)
+        ttk.Label(parent, text="Yeni Yorum", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W)
+        self.txt_new_comment = tk.Text(parent, height=4, wrap=tk.WORD, font=("Segoe UI", 10))
+        self.txt_new_comment.pack(fill=tk.X)
+        ttk.Button(parent, text="Gönder", command=self._add_comment).pack(anchor=tk.E, pady=(4, 0))
+
+    def _build_attachments_tab(self, parent):
+        cols = ("Dosya Adı", "Boyut", "Yükleyen", "Tarih")
+        self.attach_tree = ttk.Treeview(parent, columns=cols, show="headings", height=15)
+        for col in cols:
+            self.attach_tree.heading(col, text=col)
+        self.attach_tree.column("Dosya Adı", width=300)
+        self.attach_tree.column("Boyut", width=80, anchor="center")
+        self.attach_tree.column("Yükleyen", width=150)
+        self.attach_tree.column("Tarih", width=130, anchor="center")
+        vsb = ttk.Scrollbar(parent, orient="vertical", command=self.attach_tree.yview)
+        self.attach_tree.configure(yscrollcommand=vsb.set)
+        self.attach_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._attach_urls = {}  # item_id -> {filename, content_url, mime_type}
+        self.attach_tree.bind("<Double-1>", self._open_attachment)
+
+    # --------------------------------------------------------------- Load --
+    def _load_all(self):
+        def fetch():
+            issue = self.jira_client.get_issue(self.issue_key)
+            comments_resp = self.jira_client.get_issue_comments(self.issue_key)
+            attachments = self.jira_client.get_attachments(self.issue_key)
+            self.dialog.after(0, lambda: self._populate(issue, comments_resp, attachments))
+        threading.Thread(target=fetch, daemon=True).start()
+
+    def _populate(self, issue, comments_resp, attachments):
+        if "error" in issue:
+            self.lbl_key.config(text=f"Hata: {issue['error']}")
+            return
+
+        fields = issue.get("fields", {})
+
+        self.lbl_key.config(text=self.issue_key)
+        self.lbl_summary.config(text=fields.get("summary", ""))
+
+        def fmt_date(d):
+            return d[:19].replace("T", " ") if d else ""
+
+        components = ", ".join(c.get("name", "") for c in fields.get("components", []))
+        labels = ", ".join(fields.get("labels", []))
+
+        self._meta_vars["Status:"].set(fields.get("status", {}).get("name", ""))
+        self._meta_vars["Assignee:"].set((fields.get("assignee") or {}).get("displayName", ""))
+        self._meta_vars["Reporter:"].set((fields.get("reporter") or {}).get("displayName", ""))
+        self._meta_vars["Priority:"].set((fields.get("priority") or {}).get("name", ""))
+        self._meta_vars["Created:"].set(fmt_date(fields.get("created", "")))
+        self._meta_vars["Updated:"].set(fmt_date(fields.get("updated", "")))
+        self._meta_vars["Components:"].set(components)
+        self._meta_vars["Labels:"].set(labels)
+
+        # Açıklama
+        self.txt_desc.configure(state=tk.NORMAL)
+        render_jira_markup(self.txt_desc, fields.get("description", "") or "")
+        self.txt_desc.configure(state=tk.DISABLED)
+
+        # Yorumlar
+        self._comments = []
+        if "error" not in comments_resp:
+            self._comments = comments_resp.get("fields", {}).get("comment", {}).get("comments", [])
+        self._render_comments()
+
+        # Ekler
+        for row in self.attach_tree.get_children():
+            self.attach_tree.delete(row)
+        self._attach_urls.clear()
+        if isinstance(attachments, list):
+            for a in attachments:
+                size_kb = f"{a.get('size', 0) // 1024} KB"
+                author = (a.get("author") or {}).get("displayName", "")
+                created = fmt_date(a.get("created", ""))
+                iid = self.attach_tree.insert("", tk.END, values=(a.get("filename", ""), size_kb, author, created))
+                self._attach_urls[iid] = {
+                    "filename": a.get("filename", ""),
+                    "url": a.get("content", ""),
+                    "mime": a.get("mimeType", "")
+                }
+
+    def _render_comments(self):
+        for w in self.comments_inner.winfo_children():
+            w.destroy()
+
+        current_account = (self.current_user or {}).get("accountId", "")
+
+        for c in self._comments:
+            cid = c.get("id", "")
+            author = (c.get("author") or {}).get("displayName", "")
+            author_id = (c.get("author") or {}).get("accountId", "")
+            created = c.get("created", "")[:19].replace("T", " ")
+
+            frame = ttk.Frame(self.comments_inner, relief="groove", padding=6)
+            frame.pack(fill=tk.X, padx=4, pady=4)
+
+            header = ttk.Frame(frame)
+            header.pack(fill=tk.X)
+            ttk.Label(header, text=author, font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
+            ttk.Label(header, text=f"  {created}", font=("Segoe UI", 8), foreground="#888").pack(side=tk.LEFT)
+
+            txt = tk.Text(frame, wrap=tk.WORD, font=("Segoe UI", 10), height=max(3, (c.get("body") or "").count("\n")+2),
+                          state=tk.NORMAL, cursor="arrow", relief="flat", background="#f9f9f9")
+            txt.pack(fill=tk.X, pady=(4, 0))
+            render_jira_markup(txt, c.get("body", "") or "")
+            txt.configure(state=tk.DISABLED)
+
+            # Sadece kendi yorumunu düzenleyebilir
+            if author_id == current_account:
+                ttk.Button(frame, text="Düzenle", width=8,
+                           command=lambda t=txt, ci=cid, b=c.get("body",""): self._edit_comment(t, ci, b)).pack(anchor=tk.E, pady=(4, 0))
+
+    def _edit_comment(self, txt_widget, comment_id, original_body):
+        """Yorumu düzenlenebilir yap"""
+        txt_widget.configure(state=tk.NORMAL, background="white", cursor="xterm")
+
+        btn_frame = txt_widget.master.winfo_children()[-1]  # Düzenle butonu
+        btn_frame.destroy()
+
+        actions = ttk.Frame(txt_widget.master)
+        actions.pack(anchor=tk.E, pady=(4, 0))
+
+        def save():
+            new_body = txt_widget.get("1.0", tk.END).strip()
+            def do_update():
+                result = self.jira_client.update_comment(self.issue_key, comment_id, new_body)
+                if "error" in result:
+                    self.dialog.after(0, lambda: messagebox.showerror("Hata", result["error"], parent=self.dialog))
+                else:
+                    self.dialog.after(0, self._reload_comments)
+            threading.Thread(target=do_update, daemon=True).start()
+
+        def cancel():
+            txt_widget.delete("1.0", tk.END)
+            txt_widget.insert("1.0", original_body)
+            txt_widget.configure(state=tk.DISABLED, background="#f9f9f9", cursor="arrow")
+            actions.destroy()
+            ttk.Button(txt_widget.master, text="Düzenle", width=8,
+                       command=lambda: self._edit_comment(txt_widget, comment_id, original_body)).pack(anchor=tk.E, pady=(4, 0))
+
+        ttk.Button(actions, text="Kaydet", width=8, command=save).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(actions, text="İptal", width=8, command=cancel).pack(side=tk.LEFT)
+
+    def _add_comment(self):
+        body = self.txt_new_comment.get("1.0", tk.END).strip()
+        if not body:
+            return
+        self.txt_new_comment.configure(state=tk.DISABLED)
+
+        def do_add():
+            result = self.jira_client.add_comment(self.issue_key, body)
+            if "error" in result:
+                self.dialog.after(0, lambda: (
+                    messagebox.showerror("Hata", result["error"], parent=self.dialog),
+                    self.txt_new_comment.configure(state=tk.NORMAL)
+                ))
+            else:
+                self.dialog.after(0, lambda: (
+                    self.txt_new_comment.delete("1.0", tk.END),
+                    self.txt_new_comment.configure(state=tk.NORMAL),
+                    self._reload_comments()
+                ))
+        threading.Thread(target=do_add, daemon=True).start()
+
+    def _reload_comments(self):
+        def fetch():
+            resp = self.jira_client.get_issue_comments(self.issue_key)
+            self._comments = resp.get("fields", {}).get("comment", {}).get("comments", []) if "error" not in resp else []
+            self.dialog.after(0, self._render_comments)
+        threading.Thread(target=fetch, daemon=True).start()
+
+    def _open_attachment(self, event):
+        """Eke çift tıklanınca aç veya indir"""
+        import tempfile, webbrowser, subprocess, sys
+        sel = self.attach_tree.selection()
+        if not sel:
+            return
+        info = self._attach_urls.get(sel[0])
+        if not info or not info["url"]:
+            return
+
+        filename = info["filename"]
+        url = info["url"]
+        mime = info["mime"].lower()
+        ext = os.path.splitext(filename)[1].lower()
+
+        # Görüntülenebilir türler
+        VIEWABLE = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg",
+                    ".txt", ".log", ".xml", ".json", ".html", ".htm",
+                    ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx"}
+
+        def do_open():
+            tmp_dir = tempfile.mkdtemp()
+            dest = os.path.join(tmp_dir, filename)
+            err = self.jira_client.download_attachment(url, dest)
+            if err:
+                self.dialog.after(0, lambda: messagebox.showerror("İndirme Hatası", err, parent=self.dialog))
+                return
+
+            if ext in VIEWABLE:
+                # OS varsayılan uygulamasıyla aç
+                self.dialog.after(0, lambda: _open_file(dest))
+            else:
+                # İndir — kullanıcıya kayıt yeri sor
+                from tkinter import filedialog
+                def ask_save():
+                    save_path = filedialog.asksaveasfilename(
+                        parent=self.dialog,
+                        initialfile=filename,
+                        title="Dosyayı Kaydet"
+                    )
+                    if save_path:
+                        import shutil
+                        shutil.copy2(dest, save_path)
+                        messagebox.showinfo("İndirildi", f"Dosya kaydedildi:\n{save_path}", parent=self.dialog)
+                self.dialog.after(0, ask_save)
+
+        threading.Thread(target=do_open, daemon=True).start()
+
+
+def _open_file(path):
+    """OS'a göre dosyayı varsayılan uygulamayla aç"""
+    import subprocess, sys
+    try:
+        if sys.platform == "win32":
+            os.startfile(path)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        else:
+            subprocess.Popen(["xdg-open", path])
+    except Exception as e:
+        messagebox.showerror("Açma Hatası", str(e))
+
+
+class JiraMonitorApp:
+    """Ana uygulama sınıfı"""
+    
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Jira Monitor")
+        self.root.geometry("1400x800")
+        self.root.state('zoomed')  # Tam ekran
+        
+        # Modern stil ayarları
+        self._setup_styles()
+        
+        self.config_manager = ConfigManager()
+        self.jira_client = None
+        self._current_user = None
+        self.refresh_interval = 120
+        self.last_update = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+        self.issues = []
+        self.refresh_thread = None
+        self.is_running = True
+        
+        self._setup_ui()
+        self._connect_jira()
+        self._start_refresh()
+    
+    def _setup_styles(self):
+        """Modern stil ayarları"""
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        # Genel font
+        style.configure('.', font=('Segoe UI', 10))
+        
+        # Treeview stil
+        style.configure('Treeview', 
+            font=('Segoe UI', 10),
+            rowheight=28,
+            background='white',
+            fieldbackground='white',
+            selectbackground='#0078d7',
+            selectforeground='white'
+        )
+        style.configure('Treeview.Heading',
+            font=('Segoe UI', 10, 'bold'),
+            background='#e0e0e0',
+            relief='flat'
+        )
+        style.map('Treeview.Heading',
+            background=[('active', '#d0d0d0')]
+        )
+        
+        # Frame stilleri
+        style.configure('Card.TFrame', background='white')
+        
+        # Label stilleri
+        style.configure('Title.TLabel', font=('Segoe UI', 14, 'bold'), foreground='#0078d7')
+        style.configure('Subtitle.TLabel', font=('Segoe UI', 11), foreground='#666666')
+    
+    def _setup_ui(self):
+        """UI kurulumu"""
+        # Ana arka plan
+        self.root.configure(background='#f0f0f0')
+        
+        # Menu bar
+        menubar = tk.Menu(self.root)
+        self.root.config(menu=menubar)
+        
+        # Settings menu
+        settings_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Ayarlar", menu=settings_menu)
+        settings_menu.add_command(label="Yapılandırma", command=self._show_settings)
+        settings_menu.add_separator()
+        settings_menu.add_command(label="Çıkış", command=self._exit)
+        
+        # Ana container
+        main_container = ttk.Frame(self.root)
+        main_container.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
+        
+        # Başlık
+        header_frame = ttk.Frame(main_container)
+        header_frame.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(header_frame, text="Jira Issue Monitor", style='Title.TLabel').pack(side=tk.LEFT)
+        self.lbl_count = ttk.Label(header_frame, text="0 issue", style='Subtitle.TLabel')
+        self.lbl_count.pack(side=tk.RIGHT, padx=20)
+        
+        # Filter frame
+        filter_frame = ttk.LabelFrame(main_container, text="Filtreler", padding="12")
+        filter_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        # Filter içeriği
+        filter_content = ttk.Frame(filter_frame)
+        filter_content.pack(fill=tk.X)
+        
+        # User filter
+        ttk.Label(filter_content, text="Kullanıcı:").pack(side=tk.LEFT, padx=(0, 5))
+        self.user_var = tk.StringVar()
+        self.user_combo = ttk.Combobox(filter_content, textvariable=self.user_var, width=22, state='readonly')
+        self.user_combo.pack(side=tk.LEFT, padx=(0, 15))
+        self.user_combo.bind('<<ComboboxSelected>>', lambda e: self._load_issues())
+        
+        # Project filter
+        ttk.Label(filter_content, text="Proje:").pack(side=tk.LEFT, padx=(0, 5))
+        self.project_var = tk.StringVar()
+        self.project_combo = ttk.Combobox(filter_content, textvariable=self.project_var, width=15, state='readonly')
+        self.project_combo.pack(side=tk.LEFT, padx=(0, 15))
+        self.project_combo.bind('<<ComboboxSelected>>', lambda e: self._load_issues())
+        
+        # Status filter
+        ttk.Label(filter_content, text="Status:").pack(side=tk.LEFT, padx=(0, 5))
+        self.status_var = tk.StringVar()
+        self.status_combo = ttk.Combobox(filter_content, textvariable=self.status_var, width=18, state='readonly')
+        self.status_combo.pack(side=tk.LEFT, padx=(0, 15))
+        self.status_combo.bind('<<ComboboxSelected>>', lambda e: self._load_issues())
+        
+        # Buttons
+        btn_frame = ttk.Frame(filter_content)
+        btn_frame.pack(side=tk.RIGHT)
+        
+        ttk.Button(btn_frame, text="🔄 Yenile", command=self._load_issues, width=12).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="⚙️ Ayarlar", command=self._show_settings, width=12).pack(side=tk.LEFT, padx=5)
+        
+        # Treeview container
+        tree_container = ttk.Frame(main_container)
+        tree_container.pack(fill=tk.BOTH, expand=True)
+        
+        columns = ("#", "Key", "Summary", "Status", "Assignee", "Project", "Updated", "Created")
+        self.tree = ttk.Treeview(tree_container, columns=columns, show='headings', selectmode='browse')
+        
+        # Column headings
+        self.tree.heading("#", text="#")
+        self.tree.heading("Key", text="Key")
+        self.tree.heading("Summary", text="Summary")
+        self.tree.heading("Status", text="Status")
+        self.tree.heading("Assignee", text="Assignee")
+        self.tree.heading("Project", text="Project")
+        self.tree.heading("Updated", text="Updated")
+        self.tree.heading("Created", text="Created")
+        
+        # Column widths
+        self.tree.column("#", width=40, anchor='center')
+        self.tree.column("Key", width=90, anchor='center')
+        self.tree.column("Summary", width=350)
+        self.tree.column("Status", width=100, anchor='center')
+        self.tree.column("Assignee", width=140)
+        self.tree.column("Project", width=80, anchor='center')
+        self.tree.column("Updated", width=130, anchor='center')
+        self.tree.column("Created", width=130, anchor='center')
+        
+        # Scrollbars
+        vsb = ttk.Scrollbar(tree_container, orient="vertical", command=self.tree.yview)
+        hsb = ttk.Scrollbar(tree_container, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        
+        self.tree.grid(row=0, column=0, sticky='nsew')
+        vsb.grid(row=0, column=1, sticky='ns')
+        hsb.grid(row=1, column=0, sticky='ew')
+        
+        tree_container.grid_columnconfigure(0, weight=1)
+        tree_container.grid_rowconfigure(0, weight=1)
+        
+        # Double click to view details
+        self.tree.bind('<Double-1>', self._show_issue_details)
+        
+        # Status bar
+        self.status_bar = ttk.Label(self.root, text="Hazır", relief=tk.SUNKEN, anchor=tk.W, padding=(10, 5))
+        self.status_bar.pack(fill=tk.X, side=tk.BOTTOM)
+    
+    def _connect_jira(self):
+        """Jira'ya bağlan"""
+        server_url = self.config_manager.get("server_url", "").strip()
+        username = self.config_manager.get("username", "").strip()
+        api_token = self.config_manager.get("api_token", "").strip()
+        
+        errors = []
+        if not server_url:
+            errors.append("• Sunucu URL'si boş")
+        elif not server_url.startswith("http"):
+            errors.append("• URL 'http' veya 'https' ile başlamalı")
+        if not username:
+            errors.append("• Kullanıcı adı boş")
+        if not api_token:
+            errors.append("• API Token boş")
+        
+        if errors:
+            messagebox.showwarning(
+                "Eksik/Yanlış Bilgi",
+                "Lütfen aşağıdaki sorunları düzeltin:\n\n" + "\n".join(errors) +
+                "\n\nAyarlar menüsünden yapılandırmayı güncelleyin."
+            )
+            return False
+        
+        try:
+            client = JiraClient(server_url, username, api_token)
+            test_result = client.search_issues("project is not EMPTY", max_results=1)
+            if "error" in test_result:
+                messagebox.showerror(
+                    "Bağlantı Hatası",
+                    f"Jira sunucusuna bağlanılamadı:\n\n{test_result['error']}\n\n"
+                    "Lütfen URL ve token bilgilerini kontrol edin."
+                )
+                return False
+            self.jira_client = client
+            self._current_user = client.get_current_user()
+            self._populate_filters()
+            return True
+        except Exception as e:
+            messagebox.showerror("Bağlantı Hatası", f"Beklenmeyen hata oluştu:\n\n{str(e)}")
+            return False
+
+    def _populate_filters(self):
+        """Filtre combobox'larını doldur"""
+        users = [""] + [u.strip() for u in self.config_manager.get("default_users", "").split(",") if u.strip()]
+        projects = [""] + [p.strip() for p in self.config_manager.get("default_projects", "").split(",") if p.strip()]
+        statuses = [""] + [s.strip().strip("'") for s in self.config_manager.get("default_status", "").split(",") if s.strip()]
+        self.user_combo['values'] = users
+        self.project_combo['values'] = projects
+        self.status_combo['values'] = statuses
+    
+    def _load_issues(self):
+        """Issue'leri yükle"""
+        if not self.jira_client:
+            if not self._connect_jira():
+                return
+        
+        # Get filter values
+        user = self.user_var.get().strip()
+        project = self.project_var.get().strip()
+        status = self.status_var.get().strip()
+        
+        # Build JQL
+        jql_parts = []
+        
+        # Users
+        users = self.config_manager.get("default_users", "")
+        if user:
+            users = user
+        if users:
+            users_list = [u.strip() for u in users.split(",") if u.strip()]
+            if users_list:
+                users_str = ",".join([f'"{u}"' for u in users_list])
+                jql_parts.append(f"assignee in ({users_str})")
+        
+        # Projects
+        projects = self.config_manager.get("default_projects", "")
+        if project:
+            projects = project
+        if projects:
+            projects_list = [p.strip() for p in projects.split(",") if p.strip()]
+            if projects_list:
+                projects_str = ",".join([f'"{p}"' for p in projects_list])
+                jql_parts.append(f"project in ({projects_str})")
+        
+        # Status
+        default_status = self.config_manager.get("default_status", "")
+        if status:
+            default_status = status
+        if default_status:
+            jql_parts.append(f"status in ({default_status})")
+        
+        jql = " AND ".join(jql_parts)
+        if not jql:
+            jql = "project in (EVDBS) AND status in (OPEN, 'In Progress', Reopened)"
+        
+        jql += " ORDER BY updated DESC"
+        
+        # Show loading
+        self.status_bar.config(text="Yükleniyor...")
+        self.root.update()
+        
+        def load():
+            result = self.jira_client.search_issues(jql)
+
+            if "error" in result:
+                self.root.after(0, lambda: self.status_bar.config(text=f"Hata: {result['error']}"))
+                return
+
+            issues = result.get("issues", [])
+            self.issues = issues
+
+            def update_ui():
+                for item in self.tree.get_children():
+                    self.tree.delete(item)
+
+                for i, issue in enumerate(issues, 1):
+                    fields = issue.get("fields", {})
+                    key = issue.get("key", "")
+                    summary = fields.get("summary", "")
+                    status_name = fields.get("status", {}).get("name", "")
+                    assignee = fields.get("assignee", {}).get("displayName", "")
+                    project_name = fields.get("project", {}).get("name", "")
+                    updated = fields.get("updated", "")[:19].replace("T", " ") if fields.get("updated") else ""
+                    created = fields.get("created", "")[:19].replace("T", " ") if fields.get("created") else ""
+
+                    item_id = self.tree.insert("", tk.END, values=(
+                        i, key, summary, status_name, assignee, project_name, updated, created
+                    ))
+
+                    tags = []
+                    if project_name == "EVDBS":
+                        tags.append('evdbs')
+                    elif project_name == "EPDK":
+                        tags.append('epdk')
+                    elif project_name == "Yazılım Destek":
+                        tags.append('destek')
+                    if updated and updated.startswith(datetime.now().strftime("%Y-%m-%d")):
+                        tags.append('today')
+                    if tags:
+                        self.tree.item(item_id, tags=tuple(tags))
+
+                self.tree.tag_configure('evdbs', background='lightblue')
+                self.tree.tag_configure('epdk', background='navajowhite')
+                self.tree.tag_configure('destek', background='beige')
+                self.tree.tag_configure('today', background='lightgreen')
+                self.status_bar.config(text=f"{len(issues)} adet issue yüklendi. Son güncelleme: {datetime.now().strftime('%H:%M:%S')}")
+
+            self.root.after(0, update_ui)
+        
+        # Run in thread
+        threading.Thread(target=load, daemon=True).start()
+    
+    def _show_issue_details(self, event):
+        """Issue detayını göster"""
+        selection = self.tree.selection()
+        if not selection:
+            return
+        item = self.tree.item(selection[0])
+        key = item['values'][1]
+        if key:
+            IssueDetailDialog(self.root, self.jira_client, key, current_user=self._current_user)
+    
+    def _show_settings(self):
+        """Ayarları göster"""
+        dialog = SettingsDialog(self.root, self.config_manager)
+        self.root.wait_window(dialog.dialog)
+        
+        if dialog.result:
+            self._populate_filters()
+            self._connect_jira()
+            self._load_issues()
+    
+    def _start_refresh(self):
+        """Otomatik yenilemeyi başlat"""
+        def refresh():
+            while self.is_running:
+                time.sleep(self.config_manager.get("refresh_interval", 120))
+                if self.is_running:
+                    self.root.after(0, self._load_issues)
+        
+        self.refresh_thread = threading.Thread(target=refresh, daemon=True)
+        self.refresh_thread.start()
+    
+    def _exit(self):
+        """Çıkış"""
+        self.is_running = False
+        self.root.destroy()
+
+
+def main():
+    """Ana fonksiyon"""
+    root = tk.Tk()
+    app = JiraMonitorApp(root)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()

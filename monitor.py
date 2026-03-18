@@ -111,6 +111,21 @@ class JiraClient:
         """Giriş yapan kullanıcıyı getir"""
         return self._make_request("/rest/api/2/myself")
 
+    def update_issue_description(self, issue_key, description):
+        """Issue açıklamasını güncelle"""
+        url = f"{self.server_url}/rest/api/2/issue/{issue_key}"
+        data = json.dumps({"fields": {"description": description}}).encode("utf-8")
+        try:
+            req = urllib.request.Request(url, data=data, method="PUT")
+            req.add_header("Authorization", self.auth_header)
+            req.add_header("Content-Type", "application/json")
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return {"ok": True}
+        except urllib.error.HTTPError as e:
+            return {"error": f"HTTP {e.code}: {e.reason}"}
+        except Exception as e:
+            return {"error": str(e)}
+
     def download_attachment(self, url, dest_path):
         """Eki indir"""
         try:
@@ -435,6 +450,7 @@ class IssueDetailDialog:
         self.issue_key = issue_key
         self.current_user = current_user  # {"accountId": ..., "displayName": ...}
         self._comments = []  # cache
+        self._original_desc = ""  # ham markup
 
         self.dialog = tk.Toplevel(parent)
         self.dialog.title(f"Issue: {issue_key}")
@@ -473,6 +489,9 @@ class IssueDetailDialog:
             e.grid(row=row, column=col*2+1, sticky=tk.W, pady=2)
             self._meta_vars[lbl] = var
 
+        # Kapat — her zaman altta görünür
+        ttk.Button(main, text="Kapat", command=self.dialog.destroy).pack(side=tk.BOTTOM, anchor=tk.E, pady=(6, 0))
+
         # Notebook
         nb = ttk.Notebook(main)
         nb.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
@@ -480,7 +499,13 @@ class IssueDetailDialog:
         # --- Tab 1: Detaylar ---
         tab_detail = ttk.Frame(nb, padding=5)
         nb.add(tab_detail, text="  Detaylar  ")
-        ttk.Label(tab_detail, text="Açıklama", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W)
+
+        desc_header = ttk.Frame(tab_detail)
+        desc_header.pack(fill=tk.X)
+        ttk.Label(desc_header, text="Açıklama", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
+        self.btn_edit_desc = ttk.Button(desc_header, text="Düzenle", width=10, command=self._start_edit_desc)
+        self.btn_edit_desc.pack(side=tk.RIGHT)
+
         self.txt_desc = tk.Text(tab_detail, wrap=tk.WORD, font=("Segoe UI", 10), state=tk.DISABLED, cursor="arrow")
         sb = ttk.Scrollbar(tab_detail, command=self.txt_desc.yview)
         self.txt_desc.configure(yscrollcommand=sb.set)
@@ -496,9 +521,6 @@ class IssueDetailDialog:
         tab_attach = ttk.Frame(nb, padding=5)
         nb.add(tab_attach, text="  Dosya Ekleri  ")
         self._build_attachments_tab(tab_attach)
-
-        # Kapat
-        ttk.Button(main, text="Kapat", command=self.dialog.destroy).pack(anchor=tk.E, pady=(6, 0))
 
     def _build_comments_tab(self, parent):
         # Yorum listesi
@@ -577,8 +599,9 @@ class IssueDetailDialog:
         self._meta_vars["Labels:"].set(labels)
 
         # Açıklama
+        self._original_desc = fields.get("description", "") or ""
         self.txt_desc.configure(state=tk.NORMAL)
-        render_jira_markup(self.txt_desc, fields.get("description", "") or "")
+        render_jira_markup(self.txt_desc, self._original_desc)
         self.txt_desc.configure(state=tk.DISABLED)
 
         # Yorumlar
@@ -700,6 +723,95 @@ class IssueDetailDialog:
         import webbrowser
         url = f"{self.jira_client.server_url}/browse/{self.issue_key}"
         webbrowser.open(url)
+
+    def _start_edit_desc(self):
+        """Açıklamayı düzenleme moduna al"""
+        self.txt_desc.configure(state=tk.NORMAL, cursor="xterm", background="white")
+        self.txt_desc.delete("1.0", tk.END)
+        self.txt_desc.insert("1.0", self._original_desc)
+        self.btn_edit_desc.configure(text="Kaydet", command=self._save_desc)
+        # İptal butonu ekle
+        self._btn_cancel_desc = ttk.Button(
+            self.btn_edit_desc.master, text="İptal", width=8, command=self._cancel_edit_desc)
+        self._btn_cancel_desc.pack(side=tk.RIGHT, padx=(0, 4))
+
+    def _cancel_edit_desc(self):
+        self._btn_cancel_desc.destroy()
+        self.btn_edit_desc.configure(text="Düzenle", command=self._start_edit_desc)
+        self.txt_desc.configure(state=tk.NORMAL)
+        render_jira_markup(self.txt_desc, self._original_desc)
+        self.txt_desc.configure(state=tk.DISABLED, cursor="arrow", background="white")
+
+    def _save_desc(self):
+        new_body = self.txt_desc.get("1.0", tk.END).rstrip("\n")
+        if new_body == self._original_desc:
+            self._cancel_edit_desc()
+            return
+        self._show_diff_dialog(self._original_desc, new_body)
+
+    def _show_diff_dialog(self, old, new):
+        """Diff göster ve onaylatır"""
+        import difflib
+        diff = list(difflib.unified_diff(
+            old.splitlines(), new.splitlines(),
+            lineterm="", fromfile="Mevcut", tofile="Yeni"
+        ))
+
+        win = tk.Toplevel(self.dialog)
+        win.title("Değişiklikleri Onayla")
+        win.geometry("800x500")
+        win.transient(self.dialog)
+        win.grab_set()
+
+        ttk.Label(win, text="Aşağıdaki değişiklikler kaydedilecek. Onaylıyor musunuz?",
+                  font=("Segoe UI", 10)).pack(anchor=tk.W, padx=10, pady=(10, 5))
+
+        txt = tk.Text(win, font=("Courier New", 9), wrap=tk.NONE)
+        vsb = ttk.Scrollbar(win, orient="vertical", command=txt.yview)
+        hsb = ttk.Scrollbar(win, orient="horizontal", command=txt.xview)
+        txt.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        txt.tag_configure("add", background="#ccffcc", foreground="#006600")
+        txt.tag_configure("remove", background="#ffcccc", foreground="#cc0000")
+        txt.tag_configure("meta", foreground="#888888")
+
+        for line in diff:
+            if line.startswith("+") and not line.startswith("+++"):
+                txt.insert(tk.END, line + "\n", "add")
+            elif line.startswith("-") and not line.startswith("---"):
+                txt.insert(tk.END, line + "\n", "remove")
+            else:
+                txt.insert(tk.END, line + "\n", "meta")
+
+        txt.configure(state=tk.DISABLED)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        hsb.pack(side=tk.BOTTOM, fill=tk.X)
+        txt.pack(fill=tk.BOTH, expand=True, padx=10)
+
+        btn_frame = ttk.Frame(win)
+        btn_frame.pack(fill=tk.X, padx=10, pady=8)
+
+        def confirm():
+            win.destroy()
+            self._do_update_desc(new)
+
+        ttk.Button(btn_frame, text="✔ Onayla ve Kaydet", command=confirm).pack(side=tk.RIGHT, padx=(5, 0))
+        ttk.Button(btn_frame, text="İptal", command=win.destroy).pack(side=tk.RIGHT)
+
+    def _do_update_desc(self, new_body):
+        def do():
+            result = self.jira_client.update_issue_description(self.issue_key, new_body)
+            if "error" in result:
+                self.dialog.after(0, lambda: messagebox.showerror("Hata", result["error"], parent=self.dialog))
+            else:
+                self._original_desc = new_body
+                self.dialog.after(0, lambda: (
+                    self._btn_cancel_desc.destroy() if hasattr(self, "_btn_cancel_desc") and self._btn_cancel_desc.winfo_exists() else None,
+                    self.btn_edit_desc.configure(text="Düzenle", command=self._start_edit_desc),
+                    render_jira_markup(self.txt_desc, self._original_desc) or
+                    self.txt_desc.configure(state=tk.DISABLED, cursor="arrow")
+                ))
+        threading.Thread(target=do, daemon=True).start()
 
     def _open_attachment(self, event):
         """Eke çift tıklanınca aç veya indir"""

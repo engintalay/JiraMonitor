@@ -296,6 +296,9 @@ def render_jira_markup(widget, text):
 
     widget.delete("1.0", tk.END)
 
+    # Seçili metin disabled modda da okunabilsin
+    widget.configure(selectbackground="#0078d7", selectforeground="white", inactiveselectbackground="#0078d7")
+
     # Tag tanımları
     widget.tag_configure("h1", font=("Segoe UI", 16, "bold"), spacing3=4)
     widget.tag_configure("h2", font=("Segoe UI", 14, "bold"), spacing3=3)
@@ -435,7 +438,7 @@ class IssueDetailDialog:
 
         self.dialog = tk.Toplevel(parent)
         self.dialog.title(f"Issue: {issue_key}")
-        self.dialog.geometry("860x700")
+        self.dialog.geometry("900x780")
         self.dialog.resizable(True, True)
         self.dialog.transient(parent)
 
@@ -447,9 +450,13 @@ class IssueDetailDialog:
         main = ttk.Frame(self.dialog, padding=10)
         main.pack(fill=tk.BOTH, expand=True)
 
-        # Başlık
-        self.lbl_key = ttk.Label(main, text="Yükleniyor…", font=("Segoe UI", 13, "bold"))
-        self.lbl_key.pack(anchor=tk.W)
+        # Başlık satırı
+        header_row = ttk.Frame(main)
+        header_row.pack(fill=tk.X)
+        self.lbl_key = ttk.Label(header_row, text="Yükleniyor…", font=("Segoe UI", 13, "bold"))
+        self.lbl_key.pack(side=tk.LEFT)
+        ttk.Button(header_row, text="🌐 Tarayıcıda Aç", command=self._open_in_browser).pack(side=tk.RIGHT)
+
         self.lbl_summary = ttk.Label(main, text="", font=("Segoe UI", 11), wraplength=820, justify=tk.LEFT)
         self.lbl_summary.pack(anchor=tk.W, pady=(2, 8))
 
@@ -628,8 +635,11 @@ class IssueDetailDialog:
                            command=lambda t=txt, ci=cid, b=c.get("body",""): self._edit_comment(t, ci, b)).pack(anchor=tk.E, pady=(4, 0))
 
     def _edit_comment(self, txt_widget, comment_id, original_body):
-        """Yorumu düzenlenebilir yap"""
+        """Yorumu düzenlenebilir yap — ham Jira markup ile"""
+        # Rendered içeriği temizle, ham markup'ı yaz
         txt_widget.configure(state=tk.NORMAL, background="white", cursor="xterm")
+        txt_widget.delete("1.0", tk.END)
+        txt_widget.insert("1.0", original_body)
 
         btn_frame = txt_widget.master.winfo_children()[-1]  # Düzenle butonu
         btn_frame.destroy()
@@ -648,10 +658,10 @@ class IssueDetailDialog:
             threading.Thread(target=do_update, daemon=True).start()
 
         def cancel():
-            txt_widget.delete("1.0", tk.END)
-            txt_widget.insert("1.0", original_body)
-            txt_widget.configure(state=tk.DISABLED, background="#f9f9f9", cursor="arrow")
             actions.destroy()
+            txt_widget.configure(state=tk.NORMAL)
+            render_jira_markup(txt_widget, original_body)
+            txt_widget.configure(state=tk.DISABLED, background="#f9f9f9", cursor="arrow")
             ttk.Button(txt_widget.master, text="Düzenle", width=8,
                        command=lambda: self._edit_comment(txt_widget, comment_id, original_body)).pack(anchor=tk.E, pady=(4, 0))
 
@@ -685,6 +695,11 @@ class IssueDetailDialog:
             self._comments = resp.get("fields", {}).get("comment", {}).get("comments", []) if "error" not in resp else []
             self.dialog.after(0, self._render_comments)
         threading.Thread(target=fetch, daemon=True).start()
+
+    def _open_in_browser(self):
+        import webbrowser
+        url = f"{self.jira_client.server_url}/browse/{self.issue_key}"
+        webbrowser.open(url)
 
     def _open_attachment(self, event):
         """Eke çift tıklanınca aç veya indir"""

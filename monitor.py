@@ -111,6 +111,21 @@ class JiraClient:
         """Giriş yapan kullanıcıyı getir"""
         return self._make_request("/rest/api/2/myself")
 
+    def assign_issue(self, issue_key, username):
+        """Issue'yu kullanıcıya ata"""
+        url = f"{self.server_url}/rest/api/2/issue/{issue_key}/assignee"
+        data = json.dumps({"name": username}).encode("utf-8")
+        try:
+            req = urllib.request.Request(url, data=data, method="PUT")
+            req.add_header("Authorization", self.auth_header)
+            req.add_header("Content-Type", "application/json")
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return {"ok": True}
+        except urllib.error.HTTPError as e:
+            return {"error": f"HTTP {e.code}: {e.reason}"}
+        except Exception as e:
+            return {"error": str(e)}
+
     def update_issue_description(self, issue_key, description):
         """Issue açıklamasını güncelle"""
         url = f"{self.server_url}/rest/api/2/issue/{issue_key}"
@@ -161,7 +176,11 @@ class ConfigManager:
             "refresh_interval": 120,
             "default_users": "haktan.atamer,ayse.aydogdu,yasarcan.tak,engin.talay,umutcan.hazir,furkan.yilmaz,sebnem.manav,feride.kepenek,yunus.akyildirim,ersen.gultepe,firat.ciftci,murat.kanbes",
             "default_projects": "EVDBS,EPDK,Vedop3_VT,KONF",
-            "default_status": "OPEN,'In Progress',Reopened"
+            "default_status": "OPEN,'In Progress',Reopened",
+            "extra_projects": "",
+            "extra_statuses": "",
+            "assign_queue": [],
+            "assign_queue_index": 0
         }
     
     def save_config(self, config):
@@ -189,7 +208,7 @@ class SettingsDialog:
         
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("Jira Monitor - Ayarlar")
-        self.dialog.geometry("650x550")
+        self.dialog.geometry("650x700")
         self.dialog.resizable(True, True)
         self.dialog.transient(parent)
         self.dialog.grab_set()
@@ -210,9 +229,13 @@ class SettingsDialog:
         main_frame = ttk.Frame(self.dialog, padding="15")
         main_frame.pack(fill=tk.BOTH, expand=True)
         
-        # Notebook (sekmeler)
+        # Butonlar — her zaman altta görünür
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(8, 0))
+
+        # Notebook
         notebook = ttk.Notebook(main_frame)
-        notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+        notebook.pack(fill=tk.BOTH, expand=True)
         
         # Bağlantı sekmesi
         conn_frame = ttk.Frame(notebook, padding="15")
@@ -256,10 +279,21 @@ class SettingsDialog:
         self.default_status = ttk.Entry(filter_frame, width=60, font=('Segoe UI', 10))
         self.default_status.pack(anchor=tk.W, pady=(0, 15))
         self.default_status.insert(0, self.config_manager.get("default_status", ""))
-        
-        # Butonlar
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X)
+
+        ttk.Label(filter_frame, text="Ek Projeler (combobox'ta görünür, virgülle ayırın):", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
+        self.extra_projects = ttk.Entry(filter_frame, width=60, font=('Segoe UI', 10))
+        self.extra_projects.pack(fill=tk.X, pady=(0, 15))
+        self.extra_projects.insert(0, self.config_manager.get("extra_projects", ""))
+
+        ttk.Label(filter_frame, text="Ek Statuslar (combobox'ta görünür, virgülle ayırın):", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
+        self.extra_statuses = ttk.Entry(filter_frame, width=60, font=('Segoe UI', 10))
+        self.extra_statuses.pack(fill=tk.X, pady=(0, 15))
+        self.extra_statuses.insert(0, self.config_manager.get("extra_statuses", ""))
+
+        # Atama Kuyruğu sekmesi
+        queue_frame = ttk.Frame(notebook, padding="15")
+        notebook.add(queue_frame, text="  Atama Kuyruğu  ")
+        self._build_queue_tab(queue_frame)
         
         ttk.Button(button_frame, text="Kaydet", command=self._save, width=15).pack(side=tk.RIGHT, padx=(5, 0))
         ttk.Button(button_frame, text="İptal", command=self._cancel, width=15).pack(side=tk.RIGHT, padx=5)
@@ -273,15 +307,93 @@ class SettingsDialog:
             "refresh_interval": int(self.refresh_interval.get()),
             "default_users": self.default_users.get("1.0", tk.END).strip(),
             "default_projects": self.default_projects.get("1.0", tk.END).strip(),
-            "default_status": self.default_status.get().strip()
+            "default_status": self.default_status.get().strip(),
+            "extra_projects": self.extra_projects.get().strip(),
+            "extra_statuses": self.extra_statuses.get().strip(),
+            "assign_queue": list(self.queue_listbox.get(0, tk.END)),
+            "assign_queue_index": self.config_manager.get("assign_queue_index", 0),
         }
         self.config_manager.save_config(config)
         self.result = config
         self.dialog.destroy()
-    
+
     def _cancel(self):
         """İptal butonu"""
         self.dialog.destroy()
+    
+    def _build_queue_tab(self, parent):
+        ttk.Label(parent, text="Round-Robin Atama Listesi", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 8))
+
+        # Mevcut sıra göstergesi
+        idx = self.config_manager.get("assign_queue_index", 0)
+        queue = self.config_manager.get("assign_queue", [])
+        next_user = queue[idx % len(queue)] if queue else "-"
+        self.lbl_next = ttk.Label(parent, text=f"Sıradaki: {next_user}", foreground="#0078d7")
+        self.lbl_next.pack(anchor=tk.W, pady=(0, 8))
+
+        # Liste + butonlar
+        list_frame = ttk.Frame(parent)
+        list_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.queue_listbox = tk.Listbox(list_frame, font=("Segoe UI", 10), height=10, selectmode=tk.SINGLE)
+        vsb = ttk.Scrollbar(list_frame, orient="vertical", command=self.queue_listbox.yview)
+        self.queue_listbox.configure(yscrollcommand=vsb.set)
+        self.queue_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.LEFT, fill=tk.Y)
+
+        for u in queue:
+            self.queue_listbox.insert(tk.END, u)
+
+        btn_col = ttk.Frame(list_frame)
+        btn_col.pack(side=tk.LEFT, padx=(8, 0), anchor=tk.N)
+        ttk.Button(btn_col, text="▲ Yukarı", width=12, command=self._queue_up).pack(pady=2)
+        ttk.Button(btn_col, text="▼ Aşağı", width=12, command=self._queue_down).pack(pady=2)
+        ttk.Button(btn_col, text="✕ Sil", width=12, command=self._queue_remove).pack(pady=2)
+        ttk.Button(btn_col, text="Sıfırla", width=12, command=self._queue_reset).pack(pady=(12, 2))
+
+        # Kullanıcı ekle
+        add_frame = ttk.Frame(parent)
+        add_frame.pack(fill=tk.X, pady=(8, 0))
+        default_users = [u.strip() for u in self.config_manager.get("default_users", "").split(",") if u.strip()]
+        self.entry_queue_user = ttk.Combobox(add_frame, font=("Segoe UI", 10), values=default_users)
+        self.entry_queue_user.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        ttk.Button(add_frame, text="Ekle", command=self._queue_add).pack(side=tk.LEFT)
+
+    def _queue_add(self):
+        user = self.entry_queue_user.get().strip()
+        if user:
+            self.queue_listbox.insert(tk.END, user)
+            self.entry_queue_user.delete(0, tk.END)
+
+    def _queue_remove(self):
+        sel = self.queue_listbox.curselection()
+        if sel:
+            self.queue_listbox.delete(sel[0])
+
+    def _queue_up(self):
+        sel = self.queue_listbox.curselection()
+        if sel and sel[0] > 0:
+            i = sel[0]
+            val = self.queue_listbox.get(i)
+            self.queue_listbox.delete(i)
+            self.queue_listbox.insert(i - 1, val)
+            self.queue_listbox.selection_set(i - 1)
+
+    def _queue_down(self):
+        sel = self.queue_listbox.curselection()
+        if sel and sel[0] < self.queue_listbox.size() - 1:
+            i = sel[0]
+            val = self.queue_listbox.get(i)
+            self.queue_listbox.delete(i)
+            self.queue_listbox.insert(i + 1, val)
+            self.queue_listbox.selection_set(i + 1)
+
+    def _queue_reset(self):
+        self.config_manager.set("assign_queue_index", 0)
+        self.config_manager.save_config(self.config_manager.config)
+        queue = list(self.queue_listbox.get(0, tk.END))
+        next_user = queue[0] if queue else "-"
+        self.lbl_next.config(text=f"Sıradaki: {next_user}")
 
 
 def _jira_to_text(text):
@@ -1001,10 +1113,9 @@ class JiraMonitorApp:
         tree_container = ttk.Frame(main_container)
         tree_container.pack(fill=tk.BOTH, expand=True)
         
-        columns = ("#", "Key", "Summary", "Status", "Assignee", "Project", "Updated", "Created")
+        columns = ("#", "Key", "Summary", "Status", "Assignee", "Project", "Updated", "Created", "Ata")
         self.tree = ttk.Treeview(tree_container, columns=columns, show='headings', selectmode='browse')
         
-        # Column headings
         self.tree.heading("#", text="#")
         self.tree.heading("Key", text="Key")
         self.tree.heading("Summary", text="Summary")
@@ -1013,16 +1124,17 @@ class JiraMonitorApp:
         self.tree.heading("Project", text="Project")
         self.tree.heading("Updated", text="Updated")
         self.tree.heading("Created", text="Created")
+        self.tree.heading("Ata", text="İş Ata")
         
-        # Column widths
         self.tree.column("#", width=40, anchor='center')
         self.tree.column("Key", width=90, anchor='center')
-        self.tree.column("Summary", width=350)
+        self.tree.column("Summary", width=320)
         self.tree.column("Status", width=100, anchor='center')
-        self.tree.column("Assignee", width=140)
+        self.tree.column("Assignee", width=130)
         self.tree.column("Project", width=80, anchor='center')
         self.tree.column("Updated", width=130, anchor='center')
         self.tree.column("Created", width=130, anchor='center')
+        self.tree.column("Ata", width=140, anchor='center')
         
         # Scrollbars
         vsb = ttk.Scrollbar(tree_container, orient="vertical", command=self.tree.yview)
@@ -1038,6 +1150,8 @@ class JiraMonitorApp:
         
         # Double click to view details
         self.tree.bind('<Double-1>', self._show_issue_details)
+        # Ata kolonu tıklama
+        self.tree.bind('<Button-1>', self._on_tree_click)
         
         # Status bar
         self.status_bar = ttk.Label(self.root, text="Hazır", relief=tk.SUNKEN, anchor=tk.W, padding=(10, 5))
@@ -1088,11 +1202,11 @@ class JiraMonitorApp:
     def _populate_filters(self):
         """Filtre combobox'larını doldur"""
         users = [""] + [u.strip() for u in self.config_manager.get("default_users", "").split(",") if u.strip()]
-        projects = [""] + [p.strip() for p in self.config_manager.get("default_projects", "").split(",") if p.strip()]
-        statuses = [""] + [s.strip().strip("'") for s in self.config_manager.get("default_status", "").split(",") if s.strip()]
+        extra_projects = [p.strip() for p in self.config_manager.get("extra_projects", "").split(",") if p.strip()]
+        extra_statuses = [s.strip().strip("'") for s in self.config_manager.get("extra_statuses", "").split(",") if s.strip()]
         self.user_combo['values'] = users
-        self.project_combo['values'] = projects
-        self.status_combo['values'] = statuses
+        self.project_combo['values'] = [""] + extra_projects
+        self.status_combo['values'] = [""] + extra_statuses
     
     def _load_issues(self):
         """Issue'leri yükle"""
@@ -1170,7 +1284,7 @@ class JiraMonitorApp:
                     created = fields.get("created", "")[:19].replace("T", " ") if fields.get("created") else ""
 
                     item_id = self.tree.insert("", tk.END, values=(
-                        i, key, summary, status_name, assignee, project_name, updated, created
+                        i, key, summary, status_name, assignee, project_name, updated, created, "👤 Ata"
                     ))
 
                     tags = []
@@ -1198,6 +1312,59 @@ class JiraMonitorApp:
     
     def _show_issue_details(self, event):
         """Issue detayını göster"""
+        selection = self.tree.selection()
+        if not selection:
+            return
+        item = self.tree.item(selection[0])
+        key = item['values'][1]
+        if key:
+            IssueDetailDialog(self.root, self.jira_client, key, current_user=self._current_user)
+
+    def _on_tree_click(self, event):
+        region = self.tree.identify_region(event.x, event.y)
+        if region != "cell":
+            return
+        col = self.tree.identify_column(event.x)
+        # "Ata" 9. kolon → #9
+        if col != "#9":
+            return
+        item = self.tree.identify_row(event.y)
+        if not item:
+            return
+        values = self.tree.item(item, "values")
+        key = values[1]
+        self._assign_issue(key)
+
+    def _assign_issue(self, issue_key):
+        """Round-robin ile sıradaki kullanıcıya ata"""
+        queue = self.config_manager.get("assign_queue", [])
+        if not queue:
+            messagebox.showwarning("Atama Kuyruğu Boş",
+                "Ayarlar > Atama Kuyruğu bölümünden kullanıcı ekleyin.", parent=self.root)
+            return
+
+        idx = self.config_manager.get("assign_queue_index", 0) % len(queue)
+        next_user = queue[idx]
+
+        if not messagebox.askyesno("Atama Onayı",
+                f"{issue_key} işi\n\n{next_user}\n\nkullanıcısına atanacak. Onaylıyor musunuz?",
+                parent=self.root):
+            return
+
+        def do():
+            result = self.jira_client.assign_issue(issue_key, next_user)
+            if "error" in result:
+                self.root.after(0, lambda: messagebox.showerror("Hata", result["error"], parent=self.root))
+            else:
+                new_idx = (idx + 1) % len(queue)
+                self.config_manager.set("assign_queue_index", new_idx)
+                self.config_manager.save_config(self.config_manager.config)
+                self.root.after(0, lambda: (
+                    self.status_bar.config(
+                        text=f"{issue_key} → {next_user} atandı. Sıradaki: {queue[new_idx]}"),
+                    self._load_issues()
+                ))
+        threading.Thread(target=do, daemon=True).start()
         selection = self.tree.selection()
         if not selection:
             return

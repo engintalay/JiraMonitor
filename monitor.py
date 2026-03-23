@@ -246,12 +246,12 @@ class SettingsDialog:
         self.server_url.pack(fill=tk.X, pady=(0, 15))
         self.server_url.insert(0, self.config_manager.get("server_url", ""))
         
-        ttk.Label(conn_frame, text="Kullanıcı Adı (e-posta):", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
+        ttk.Label(conn_frame, text="Kullanıcı Adı:", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
         self.username = ttk.Entry(conn_frame, width=60, font=('Segoe UI', 10))
         self.username.pack(fill=tk.X, pady=(0, 15))
         self.username.insert(0, self.config_manager.get("username", ""))
         
-        ttk.Label(conn_frame, text="API Token:", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
+        ttk.Label(conn_frame, text="Şifre:", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
         self.api_token = ttk.Entry(conn_frame, width=60, font=('Segoe UI', 10), show="*")
         self.api_token.pack(fill=tk.X, pady=(0, 15))
         self.api_token.insert(0, self.config_manager.get("api_token", ""))
@@ -556,11 +556,12 @@ def _insert_inline(widget, text, base_tag=None):
 class IssueDetailDialog:
     """Issue detay penceresi — Detaylar / Yorumlar / Ekler tabları"""
 
-    def __init__(self, parent, jira_client, issue_key, current_user=None):
+    def __init__(self, parent, jira_client, issue_key, current_user=None, config_manager=None):
         self.parent = parent
         self.jira_client = jira_client
         self.issue_key = issue_key
         self.current_user = current_user  # {"accountId": ..., "displayName": ...}
+        self.config_manager = config_manager
         self._comments = []  # cache
         self._original_desc = ""  # ham markup
 
@@ -583,6 +584,8 @@ class IssueDetailDialog:
         header_row.pack(fill=tk.X)
         self.lbl_key = ttk.Label(header_row, text="Yükleniyor…", font=("Segoe UI", 13, "bold"))
         self.lbl_key.pack(side=tk.LEFT)
+        ttk.Button(header_row, text="👤 Bana Ata", command=self._assign_to_me, width=12).pack(side=tk.RIGHT, padx=(5, 0))
+        ttk.Button(header_row, text="👥 Ata", command=self._assign_from_dialog, width=10).pack(side=tk.RIGHT, padx=(5, 0))
         ttk.Button(header_row, text="🌐 Tarayıcıda Aç", command=self._open_in_browser).pack(side=tk.RIGHT)
 
         self.lbl_summary = ttk.Label(main, text="", font=("Segoe UI", 11), wraplength=820, justify=tk.LEFT)
@@ -836,6 +839,89 @@ class IssueDetailDialog:
         url = f"{self.jira_client.server_url}/browse/{self.issue_key}"
         webbrowser.open(url)
 
+    def _assign_to_me(self):
+        """Issue'yu bağlı kullanıcıya ata"""
+        if not self.current_user:
+            messagebox.showwarning("Hata", "Kullanıcı bilgisi bulunamadı", parent=self.dialog)
+            return
+        
+        username = self.current_user.get("name") or self.current_user.get("displayName", "")
+        if not username:
+            messagebox.showwarning("Hata", "Kullanıcı adı alınamadı", parent=self.dialog)
+            return
+
+        if not messagebox.askyesno("Atama Onayı",
+                f"{self.issue_key} işi\n\n{username}\n\nkullanıcısına (sana) atanacak. Onaylıyor musunuz?",
+                parent=self.dialog):
+            return
+
+        def do():
+            result = self.jira_client.assign_issue(self.issue_key, username)
+            if "error" in result:
+                self.dialog.after(0, lambda: messagebox.showerror("Hata", result["error"], parent=self.dialog))
+            else:
+                self.dialog.after(0, lambda: messagebox.showinfo("Başarılı",
+                    f"{self.issue_key} → {username} atandı.", parent=self.dialog))
+        
+        threading.Thread(target=do, daemon=True).start()
+
+    def _assign_from_dialog(self):
+        """Dialog içinden issue ata"""
+        if not self.config_manager:
+            messagebox.showwarning("Hata", "Config manager bulunamadı", parent=self.dialog)
+            return
+        
+        users = [u.strip() for u in self.config_manager.get("default_users", "").split(",") if u.strip()]
+        if not users:
+            messagebox.showwarning("Kullanıcı Listesi Boş",
+                "Ayarlar > Filtreler bölümünde varsayılan kullanıcılar ekleyin.", parent=self.dialog)
+            return
+
+        # Kullanıcı seçme dialog'u
+        win = tk.Toplevel(self.dialog)
+        win.title("Kullanıcı Seç")
+        win.geometry("300x400")
+        win.transient(self.dialog)
+        win.grab_set()
+
+        ttk.Label(win, text="Atanacak Kullanıcı:", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, padx=10, pady=(10, 5))
+
+        listbox = tk.Listbox(win, font=("Segoe UI", 10), height=15)
+        vsb = ttk.Scrollbar(win, orient="vertical", command=listbox.yview)
+        listbox.configure(yscrollcommand=vsb.set)
+        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=5)
+        vsb.pack(side=tk.LEFT, fill=tk.Y)
+
+        for u in users:
+            listbox.insert(tk.END, u)
+
+        def assign_selected():
+            sel = listbox.curselection()
+            if not sel:
+                messagebox.showwarning("Seçim Yapılmadı", "Lütfen bir kullanıcı seçin.", parent=win)
+                return
+            
+            selected_user = users[sel[0]]
+            win.destroy()
+
+            if not messagebox.askyesno("Atama Onayı",
+                    f"{self.issue_key} işi\n\n{selected_user}\n\nkullanıcısına atanacak. Onaylıyor musunuz?",
+                    parent=self.dialog):
+                return
+
+            def do():
+                result = self.jira_client.assign_issue(self.issue_key, selected_user)
+                if "error" in result:
+                    self.dialog.after(0, lambda: messagebox.showerror("Hata", result["error"], parent=self.dialog))
+                else:
+                    self.dialog.after(0, lambda: messagebox.showinfo("Başarılı",
+                        f"{self.issue_key} → {selected_user} atandı.", parent=self.dialog))
+            
+            threading.Thread(target=do, daemon=True).start()
+
+        ttk.Button(win, text="Ata", command=assign_selected).pack(pady=10)
+
+
     def _start_edit_desc(self):
         """Açıklamayı düzenleme moduna al"""
         self.txt_desc.configure(state=tk.NORMAL, cursor="xterm", background="white")
@@ -983,7 +1069,7 @@ def _open_file(path):
         elif sys.platform == "darwin":
             subprocess.Popen(["open", path])
         else:
-            subprocess.Popen(["xdg-open", path])
+            subprocess.Popen(["xdg-open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as e:
         messagebox.showerror("Açma Hatası", str(e))
 
@@ -995,7 +1081,13 @@ class JiraMonitorApp:
         self.root = root
         self.root.title("Jira Monitor")
         self.root.geometry("1400x800")
-        self.root.state('zoomed')  # Tam ekran
+        # Tam ekran — OS'a göre
+        import sys
+        if sys.platform == "win32":
+            self.root.state('zoomed')
+        else:
+            self.root.state('normal')
+            self.root.attributes('-zoomed', True)
         
         # Modern stil ayarları
         self._setup_styles()
@@ -1318,7 +1410,7 @@ class JiraMonitorApp:
         item = self.tree.item(selection[0])
         key = item['values'][1]
         if key:
-            IssueDetailDialog(self.root, self.jira_client, key, current_user=self._current_user)
+            IssueDetailDialog(self.root, self.jira_client, key, current_user=self._current_user, config_manager=self.config_manager)
 
     def _on_tree_click(self, event):
         region = self.tree.identify_region(event.x, event.y)
@@ -1365,13 +1457,6 @@ class JiraMonitorApp:
                     self._load_issues()
                 ))
         threading.Thread(target=do, daemon=True).start()
-        selection = self.tree.selection()
-        if not selection:
-            return
-        item = self.tree.item(selection[0])
-        key = item['values'][1]
-        if key:
-            IssueDetailDialog(self.root, self.jira_client, key, current_user=self._current_user)
     
     def _show_settings(self):
         """Ayarları göster"""

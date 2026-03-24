@@ -153,6 +153,25 @@ class JiraClient:
         except Exception as e:
             return str(e)
 
+    def get_transitions(self, issue_key):
+        """Issue'nun geçiş yapabileceği durumları getir"""
+        return self._make_request(f"/rest/api/2/issue/{issue_key}/transitions")
+
+    def transition_issue(self, issue_key, transition_id):
+        """Issue'yu yeni duruma geçir"""
+        url = f"{self.server_url}/rest/api/2/issue/{issue_key}/transitions"
+        data = json.dumps({"transition": {"id": transition_id}}).encode("utf-8")
+        try:
+            req = urllib.request.Request(url, data=data, method="POST")
+            req.add_header("Authorization", self.auth_header)
+            req.add_header("Content-Type", "application/json")
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return {"ok": True}
+        except urllib.error.HTTPError as e:
+            return {"error": f"HTTP {e.code}: {e.reason}"}
+        except Exception as e:
+            return {"error": str(e)}
+
 
 class ConfigManager:
     """Ayarları yöneten sınıf"""
@@ -444,6 +463,10 @@ def render_jira_markup(widget, text):
     if not text:
         return
 
+    # Görselleri kaldır
+    text = re.sub(r'!\[?[^\]]*\]?(?:\|[^!]*)?!', '', text)
+    text = re.sub(r'!\S+!', '', text)
+
     # Satır satır işle
     lines = text.split("\n")
     i = 0
@@ -560,16 +583,19 @@ class IssueDetailDialog:
         self.parent = parent
         self.jira_client = jira_client
         self.issue_key = issue_key
-        self.current_user = current_user  # {"accountId": ..., "displayName": ...}
+        self.current_user = current_user  # {"name": ..., "displayName": ...}
+        self.current_user_name = (current_user or {}).get("name", "")
         self.config_manager = config_manager
         self._comments = []  # cache
         self._original_desc = ""  # ham markup
+        self._assignee_name = ""  # Issue'nun atandığı kişinin kullanıcı adı
 
         self.dialog = tk.Toplevel(parent)
         self.dialog.title(f"Issue: {issue_key}")
         self.dialog.geometry("900x780")
         self.dialog.resizable(True, True)
         self.dialog.transient(parent)
+        self.dialog.bind("<Escape>", lambda e: self.dialog.destroy())
 
         self._create_widgets()
         self._load_all()
@@ -586,6 +612,8 @@ class IssueDetailDialog:
         self.lbl_key.pack(side=tk.LEFT)
         ttk.Button(header_row, text="👤 Bana Ata", command=self._assign_to_me, width=12).pack(side=tk.RIGHT, padx=(5, 0))
         ttk.Button(header_row, text="👥 Ata", command=self._assign_from_dialog, width=10).pack(side=tk.RIGHT, padx=(5, 0))
+        self.btn_update = ttk.Button(header_row, text="🔄 Güncelle", command=self._update_issue, width=12)
+        self.btn_update.pack(side=tk.RIGHT, padx=(5, 0))
         ttk.Button(header_row, text="🌐 Tarayıcıda Aç", command=self._open_in_browser).pack(side=tk.RIGHT)
 
         self.lbl_summary = ttk.Label(main, text="", font=("Segoe UI", 11), wraplength=820, justify=tk.LEFT)
@@ -637,6 +665,11 @@ class IssueDetailDialog:
         nb.add(tab_attach, text="  Dosya Ekleri  ")
         self._build_attachments_tab(tab_attach)
 
+        # --- Tab 4: Durum Güncelle ---
+        tab_status = ttk.Frame(nb, padding=5)
+        nb.add(tab_status, text="  Durum Güncelle  ")
+        self._build_status_tab(tab_status)
+
     def _build_comments_tab(self, parent):
         # Yorum listesi
         list_frame = ttk.Frame(parent)
@@ -679,16 +712,30 @@ class IssueDetailDialog:
         self._attach_urls = {}  # item_id -> {filename, content_url, mime_type}
         self.attach_tree.bind("<Double-1>", self._open_attachment)
 
+    def _build_status_tab(self, parent):
+        ttk.Label(parent, text="Durum Değiştir:", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, pady=(0, 10))
+        
+        self.status_listbox = tk.Listbox(parent, font=("Segoe UI", 10), height=10)
+        vsb = ttk.Scrollbar(parent, orient="vertical", command=self.status_listbox.yview)
+        self.status_listbox.configure(yscrollcommand=vsb.set)
+        self.status_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.LEFT, fill=tk.Y)
+        
+        self._transitions = {}  # display_name -> id
+        
+        ttk.Button(parent, text="Değiştir", command=self._change_status).pack(anchor=tk.E, pady=(10, 0))
+
     # --------------------------------------------------------------- Load --
     def _load_all(self):
         def fetch():
             issue = self.jira_client.get_issue(self.issue_key)
             comments_resp = self.jira_client.get_issue_comments(self.issue_key)
             attachments = self.jira_client.get_attachments(self.issue_key)
-            self.dialog.after(0, lambda: self._populate(issue, comments_resp, attachments))
+            transitions = self.jira_client.get_transitions(self.issue_key)
+            self.dialog.after(0, lambda: self._populate(issue, comments_resp, attachments, transitions))
         threading.Thread(target=fetch, daemon=True).start()
 
-    def _populate(self, issue, comments_resp, attachments):
+    def _populate(self, issue, comments_resp, attachments, transitions=None):
         if "error" in issue:
             self.lbl_key.config(text=f"Hata: {issue['error']}")
             return
@@ -712,6 +759,13 @@ class IssueDetailDialog:
         self._meta_vars["Updated:"].set(fmt_date(fields.get("updated", "")))
         self._meta_vars["Components:"].set(components)
         self._meta_vars["Labels:"].set(labels)
+
+        # Güncelle düğmesini göster/gizle
+        self._assignee_name = (fields.get("assignee") or {}).get("name", "")
+        if self._assignee_name and self.current_user_name and self._assignee_name == self.current_user_name:
+            self.btn_update.config(state=tk.NORMAL)
+        else:
+            self.btn_update.config(state=tk.DISABLED)
 
         # Açıklama
         self._original_desc = fields.get("description", "") or ""
@@ -740,6 +794,16 @@ class IssueDetailDialog:
                     "url": a.get("content", ""),
                     "mime": a.get("mimeType", "")
                 }
+
+        # Transitions (Durum Değişiklikleri)
+        self.status_listbox.delete(0, tk.END)
+        self._transitions.clear()
+        if transitions and "error" not in transitions:
+            for t in transitions.get("transitions", []):
+                name = t.get("name", "")
+                tid = t.get("id", "")
+                self.status_listbox.insert(tk.END, name)
+                self._transitions[name] = tid
 
     def _render_comments(self):
         for w in self.comments_inner.winfo_children():
@@ -862,6 +926,48 @@ class IssueDetailDialog:
             else:
                 self.dialog.after(0, lambda: messagebox.showinfo("Başarılı",
                     f"{self.issue_key} → {username} atandı.", parent=self.dialog))
+        
+        threading.Thread(target=do, daemon=True).start()
+
+    def _update_issue(self):
+        """Issue'yu güncelle (sadece kendi işleri için)"""
+        if not messagebox.askyesno("Güncelleme Onayı",
+                f"{self.issue_key} işi güncellenecek. Onaylıyor musunuz?",
+                parent=self.dialog):
+            return
+
+        def do():
+            result = self.jira_client.get_issue(self.issue_key)
+            if "error" in result:
+                self.dialog.after(0, lambda: messagebox.showerror("Hata", result["error"], parent=self.dialog))
+            else:
+                self.dialog.after(0, lambda: messagebox.showinfo("Başarılı",
+                    f"{self.issue_key} güncellenmiştir.", parent=self.dialog))
+        
+        threading.Thread(target=do, daemon=True).start()
+
+    def _change_status(self):
+        """Durum değiştir"""
+        sel = self.status_listbox.curselection()
+        if not sel:
+            messagebox.showwarning("Seçim Yapılmadı", "Lütfen bir durum seçin.", parent=self.dialog)
+            return
+        
+        status_name = self.status_listbox.get(sel[0])
+        transition_id = self._transitions.get(status_name)
+        
+        if not messagebox.askyesno("Durum Değişikliği Onayı",
+                f"{self.issue_key} işinin durumu\n\n{status_name}\n\nolarak değiştirilecek. Onaylıyor musunuz?",
+                parent=self.dialog):
+            return
+
+        def do():
+            result = self.jira_client.transition_issue(self.issue_key, transition_id)
+            if "error" in result:
+                self.dialog.after(0, lambda: messagebox.showerror("Hata", result["error"], parent=self.dialog))
+            else:
+                self.dialog.after(0, lambda: messagebox.showinfo("Başarılı",
+                    f"{self.issue_key} durumu {status_name} olarak değiştirildi.", parent=self.dialog))
         
         threading.Thread(target=do, daemon=True).start()
 
@@ -1103,6 +1209,8 @@ class JiraMonitorApp:
         
         self._setup_ui()
         self._connect_jira()
+        if self.jira_client:
+            self._load_issues()
         self._start_refresh()
     
     def _setup_styles(self):
@@ -1205,7 +1313,7 @@ class JiraMonitorApp:
         tree_container = ttk.Frame(main_container)
         tree_container.pack(fill=tk.BOTH, expand=True)
         
-        columns = ("#", "Key", "Summary", "Status", "Assignee", "Project", "Updated", "Created", "Ata")
+        columns = ("#", "Key", "Summary", "Status", "Assignee", "Project", "Updated", "Geçen Süre", "Ata")
         self.tree = ttk.Treeview(tree_container, columns=columns, show='headings', selectmode='browse')
         
         self.tree.heading("#", text="#")
@@ -1215,17 +1323,17 @@ class JiraMonitorApp:
         self.tree.heading("Assignee", text="Assignee")
         self.tree.heading("Project", text="Project")
         self.tree.heading("Updated", text="Updated")
-        self.tree.heading("Created", text="Created")
+        self.tree.heading("Geçen Süre", text="Geçen Süre")
         self.tree.heading("Ata", text="İş Ata")
         
         self.tree.column("#", width=40, anchor='center')
         self.tree.column("Key", width=90, anchor='center')
-        self.tree.column("Summary", width=320)
+        self.tree.column("Summary", width=280)
         self.tree.column("Status", width=100, anchor='center')
         self.tree.column("Assignee", width=130)
         self.tree.column("Project", width=80, anchor='center')
         self.tree.column("Updated", width=130, anchor='center')
-        self.tree.column("Created", width=130, anchor='center')
+        self.tree.column("Geçen Süre", width=100, anchor='center')
         self.tree.column("Ata", width=140, anchor='center')
         
         # Scrollbars
@@ -1300,6 +1408,29 @@ class JiraMonitorApp:
         self.project_combo['values'] = [""] + extra_projects
         self.status_combo['values'] = [""] + extra_statuses
     
+    def _calculate_elapsed_time(self, updated_str):
+        """Geçen süreyi insan anlayacağı dilde hesapla"""
+        if not updated_str:
+            return "-"
+        
+        try:
+            updated = datetime.fromisoformat(updated_str.replace("Z", "+00:00"))
+            now = datetime.now(updated.tzinfo) if updated.tzinfo else datetime.now()
+            delta = now - updated
+            
+            seconds = int(delta.total_seconds())
+            
+            if seconds < 60:
+                return f"{seconds}s"
+            elif seconds < 3600:
+                return f"{seconds // 60}m"
+            elif seconds < 86400:
+                return f"{seconds // 3600}h"
+            else:
+                return f"{seconds // 86400}g"
+        except:
+            return "-"
+    
     def _load_issues(self):
         """Issue'leri yükle"""
         if not self.jira_client:
@@ -1373,10 +1504,12 @@ class JiraMonitorApp:
                     assignee = fields.get("assignee", {}).get("displayName", "")
                     project_name = fields.get("project", {}).get("name", "")
                     updated = fields.get("updated", "")[:19].replace("T", " ") if fields.get("updated") else ""
-                    created = fields.get("created", "")[:19].replace("T", " ") if fields.get("created") else ""
+                    
+                    # Geçen süreyi hesapla
+                    elapsed = self._calculate_elapsed_time(fields.get("updated", ""))
 
                     item_id = self.tree.insert("", tk.END, values=(
-                        i, key, summary, status_name, assignee, project_name, updated, created, "👤 Ata"
+                        i, key, summary, status_name, assignee, project_name, updated, elapsed, "👤 Ata"
                     ))
 
                     tags = []
@@ -1395,7 +1528,7 @@ class JiraMonitorApp:
                 self.tree.tag_configure('epdk', background='navajowhite')
                 self.tree.tag_configure('destek', background='beige')
                 self.tree.tag_configure('today', background='lightgreen')
-                self.status_bar.config(text=f"{len(issues)} adet issue yüklendi. Son güncelleme: {datetime.now().strftime('%H:%M:%S')}")
+                self.status_bar.config(text=f"{len(issues)} adet issue yüklendi. Son güncelleme: {datetime.now().strftime('%H:%M:%S')} | Sonraki yenileme: {self.config_manager.get('refresh_interval', 120)}s")
 
             self.root.after(0, update_ui)
         
@@ -1472,7 +1605,13 @@ class JiraMonitorApp:
         """Otomatik yenilemeyi başlat"""
         def refresh():
             while self.is_running:
-                time.sleep(self.config_manager.get("refresh_interval", 120))
+                interval = self.config_manager.get("refresh_interval", 120)
+                for remaining in range(interval, 0, -1):
+                    if not self.is_running:
+                        return
+                    self.root.after(0, lambda r=remaining: self.status_bar.config(
+                        text=f"Sonraki yenileme: {r}s"))
+                    time.sleep(1)
                 if self.is_running:
                     self.root.after(0, self._load_issues)
         

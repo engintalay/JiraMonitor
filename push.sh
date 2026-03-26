@@ -4,10 +4,11 @@
 VERSION_FILE=".version"
 VERSION=$(cat "$VERSION_FILE")
 
-# Versiyon numarasını artır (patch version)
+# Versiyon numarasını artır (patch version) + tarih saat
 IFS='.' read -r major minor patch <<< "$VERSION"
 patch=$((patch + 1))
-NEW_VERSION="$major.$minor.$patch"
+TIMESTAMP=$(date +"%Y%m%d%H%M")
+NEW_VERSION="$major.$minor.$patch.$TIMESTAMP"
 
 # Versiyon dosyasını güncelle
 echo "$NEW_VERSION" > "$VERSION_FILE"

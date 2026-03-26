@@ -1,9 +1,10 @@
 # Jira Monitor - Proje Analizi
 
-**Tarih:** 23 Mart 2026  
+**Tarih:** 26 Mart 2026  
 **Proje Adı:** Jira Monitor  
 **Dil:** Python 3  
 **UI Framework:** Tkinter  
+**Versiyon:** 1.0.0
 
 ---
 
@@ -17,15 +18,19 @@ Jira Monitor, Jira REST API'sini kullanarak masaüstü ortamında issue'ları iz
 
 ```
 JiraMonitor/
-├── monitor.py                 # Ana uygulama (1417 satır)
+├── monitor.py                 # Ana uygulama (1417+ satır)
 ├── run.sh                     # Linux/Mac çalıştırma scripti
 ├── run.bat                    # Windows çalıştırma scripti
+├── push.sh                    # Versiyon artırma ve push scripti
 ├── fix_encoding.py            # Encoding kontrol aracı
 ├── install/
 │   ├── install.sh             # Linux/Mac kurulum scripti
 │   ├── install.bat            # Windows kurulum scripti
 │   └── .venv/                 # Kurulum sırasında oluşturulan venv
 ├── .venv/                     # Aktif virtual environment
+├── .version                   # Versiyon numarası (major.minor.patch.tarih)
+├── .gitignore                 # Git ignore kuralları
+├── PROJE_ANALIZI.md           # Bu dokümantasyon
 └── __pycache__/               # Python cache dosyaları
 ```
 
@@ -365,3 +370,104 @@ def _assign_to_me(self):
 - **Eski:** Kullanıcı seçme dialog'u
 - **Yeni:** Direkt atama (bağlı kullanıcıya)
 - **Hız:** Tek tıkla atama yapılır
+- **Eski:** Kullanıcı seçme dialog'u
+- **Yeni:** Direkt atama (bağlı kullanıcıya)
+- **Hız:** Tek tıkla atama yapılır
+
+---
+
+## 🔄 Versiyon Yönetimi
+
+Uygulama otomatik versiyon yönetimi ile çalışır. Her push işlemi için `push.sh` script'i kullanılır:
+
+```bash
+./push.sh
+```
+
+**Script'in Yapıkları:**
+1. `.version` dosyasından mevcut versiyonu okur
+2. Patch versiyonu 1 artırır
+3. Tarih saat ekler (YYYYMMDDHHMM formatında)
+4. `monitor.py`'de `__version__` günceller
+5. `.version` ve `monitor.py` dosyalarını commit eder
+6. Git push yapar
+
+**Versiyon Formatı:** `1.0.0.202603261725`
+
+---
+
+## 📊 Veri Akışı
+
+```
+Jira Server
+    ↓
+JiraClient (REST API)
+    ↓
+ConfigManager (JSON config)
+    ↓
+JiraMonitorApp (Main UI)
+    ├── SettingsDialog (Ayarlar)
+    ├── IssueDetailDialog (Detaylar)
+    └── Treeview (Issue Listesi)
+```
+
+---
+
+## 🎯 Temel Özellikler
+
+✅ **Yapılan İşler:**
+
+1. **Jira Entegrasyonu**
+   - REST API v2 desteği
+   - JQL sorguları
+   - Basic authentication
+
+2. **Issue Yönetimi**
+   - Issue arama ve filtreleme
+   - Detay görüntüleme
+   - Açıklama düzenleme
+   - Yorum ekleme/düzenleme
+   - Dosya ekleri indirme
+
+3. **Atama Sistemi**
+   - Round-robin otomatik atama
+   - Atama kuyruğu yönetimi
+   - Sıradaki kullanıcı gösterimi
+
+4. **Arayüz**
+   - Modern Tkinter tasarımı
+   - Türkçe dil desteği
+   - Renk kodlaması
+   - Responsive layout
+
+5. **Otomasyon**
+   - Otomatik yenileme (threading)
+   - Jira markup render etme
+   - Dosya açma (OS entegrasyonu)
+
+6. **Yapılandırma**
+   - JSON tabanlı ayarlar
+   - Kullanıcı/proje/status filtreleri
+   - Atama kuyruğu özelleştirmesi
+
+---
+
+## 📌 Notlar
+
+- Uygulama tam ekran modunda başlar
+- Ayarlar `~/.jira_monitor_config.json` dosyasında saklanır
+- Threading kullanılarak UI donmaz
+- Jira wiki markup desteği kapsamlı
+- Dosya indirme geçici klasöre yapılır
+
+---
+
+## 🔗 Bağlantılar
+
+- **Jira Server:** https://jira.gelirler.gov.tr
+- **Varsayılan Projeler:** EVDBS, EPDK, Vedop3_VT, KONF
+- **Varsayılan Kullanıcılar:** 12 kişi (haktan.atamer, ayse.aydogdu, vb.)
+
+---
+
+**Proje Analizi Tamamlandı**

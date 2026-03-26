@@ -208,7 +208,8 @@ class ConfigManager:
             "extra_projects": "",
             "extra_statuses": "",
             "assign_queue": [],
-            "assign_queue_index": 0
+            "assign_queue_index": 0,
+            "notifications_enabled": True
         }
     
     def save_config(self, config):
@@ -288,35 +289,54 @@ class SettingsDialog:
         filter_frame = ttk.Frame(notebook, padding="15")
         notebook.add(filter_frame, text="  Filtreler  ")
         
-        ttk.Label(filter_frame, text="Yenileme Süresi (saniye):", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
-        self.refresh_interval = ttk.Entry(filter_frame, width=15, font=('Segoe UI', 10))
+        # Kaydırılabilir canvas
+        canvas = tk.Canvas(filter_frame, highlightthickness=0)
+        vsb = ttk.Scrollbar(filter_frame, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        inner_frame = ttk.Frame(canvas)
+        canvas.create_window((0, 0), window=inner_frame, anchor="nw")
+        
+        inner_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        
+        ttk.Label(inner_frame, text="Yenileme Süresi (saniye):", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
+        self.refresh_interval = ttk.Entry(inner_frame, width=15, font=('Segoe UI', 10))
         self.refresh_interval.pack(anchor=tk.W, pady=(0, 15))
         self.refresh_interval.insert(0, str(self.config_manager.get("refresh_interval", 120)))
         
-        ttk.Label(filter_frame, text="Varsayılan Kullanıcılar (virgülle ayırın):", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
-        self.default_users = scrolledtext.ScrolledText(filter_frame, width=60, height=5, font=('Segoe UI', 10))
+        ttk.Label(inner_frame, text="Varsayılan Kullanıcılar (virgülle ayırın):", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
+        self.default_users = scrolledtext.ScrolledText(inner_frame, width=60, height=5, font=('Segoe UI', 10))
         self.default_users.pack(fill=tk.X, pady=(0, 15))
         self.default_users.insert("1.0", self.config_manager.get("default_users", ""))
         
-        ttk.Label(filter_frame, text="Varsayılan Projeler (virgülle ayırın):", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
-        self.default_projects = scrolledtext.ScrolledText(filter_frame, width=60, height=3, font=('Segoe UI', 10))
+        ttk.Label(inner_frame, text="Varsayılan Projeler (virgülle ayırın):", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
+        self.default_projects = scrolledtext.ScrolledText(inner_frame, width=60, height=3, font=('Segoe UI', 10))
         self.default_projects.pack(fill=tk.X, pady=(0, 15))
         self.default_projects.insert("1.0", self.config_manager.get("default_projects", ""))
         
-        ttk.Label(filter_frame, text="Varsayılan Status (virgülle ayırın):", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
-        self.default_status = ttk.Entry(filter_frame, width=60, font=('Segoe UI', 10))
+        ttk.Label(inner_frame, text="Varsayılan Status (virgülle ayırın):", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
+        self.default_status = ttk.Entry(inner_frame, width=60, font=('Segoe UI', 10))
         self.default_status.pack(anchor=tk.W, pady=(0, 15))
         self.default_status.insert(0, self.config_manager.get("default_status", ""))
 
-        ttk.Label(filter_frame, text="Ek Projeler (combobox'ta görünür, virgülle ayırın):", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
-        self.extra_projects = ttk.Entry(filter_frame, width=60, font=('Segoe UI', 10))
+        ttk.Label(inner_frame, text="Ek Projeler (combobox'ta görünür, virgülle ayırın):", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
+        self.extra_projects = ttk.Entry(inner_frame, width=60, font=('Segoe UI', 10))
         self.extra_projects.pack(fill=tk.X, pady=(0, 15))
         self.extra_projects.insert(0, self.config_manager.get("extra_projects", ""))
 
-        ttk.Label(filter_frame, text="Ek Statuslar (combobox'ta görünür, virgülle ayırın):", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
-        self.extra_statuses = ttk.Entry(filter_frame, width=60, font=('Segoe UI', 10))
+        ttk.Label(inner_frame, text="Ek Statuslar (combobox'ta görünür, virgülle ayırın):", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
+        self.extra_statuses = ttk.Entry(inner_frame, width=60, font=('Segoe UI', 10))
         self.extra_statuses.pack(fill=tk.X, pady=(0, 15))
         self.extra_statuses.insert(0, self.config_manager.get("extra_statuses", ""))
+
+        # Bildirimler
+        ttk.Label(inner_frame, text="Bildirimler:", style='Header.TLabel').pack(anchor=tk.W, pady=(15, 5))
+        self.notifications_var = tk.BooleanVar(value=self.config_manager.get("notifications_enabled", True))
+        ttk.Checkbutton(inner_frame, text="Yeni issue bildirimlerini göster", variable=self.notifications_var).pack(anchor=tk.W, pady=(0, 10))
+        ttk.Button(inner_frame, text="Test Bildirimi Gönder", command=self._test_notification).pack(anchor=tk.W)
 
         # Atama Kuyruğu sekmesi
         queue_frame = ttk.Frame(notebook, padding="15")
@@ -340,6 +360,7 @@ class SettingsDialog:
             "extra_statuses": self.extra_statuses.get().strip(),
             "assign_queue": list(self.queue_listbox.get(0, tk.END)),
             "assign_queue_index": self.config_manager.get("assign_queue_index", 0),
+            "notifications_enabled": self.notifications_var.get(),
         }
         self.config_manager.save_config(config)
         self.result = config
@@ -348,6 +369,15 @@ class SettingsDialog:
     def _cancel(self):
         """İptal butonu"""
         self.dialog.destroy()
+    
+    def _test_notification(self):
+        """Test bildirimi gönder"""
+        import subprocess
+        try:
+            subprocess.run(["notify-send", "Jira Monitor", "Bu bir test bildirimidir."], check=False)
+            messagebox.showinfo("Bildirim", "Test bildirimi gönderildi!", parent=self.dialog)
+        except Exception as e:
+            messagebox.showerror("Hata", f"Bildirim gönderilemedi: {e}", parent=self.dialog)
     
     def _build_queue_tab(self, parent):
         ttk.Label(parent, text="Round-Robin Atama Listesi", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 8))
@@ -1271,6 +1301,8 @@ class JiraMonitorApp:
         self.issues = []
         self.refresh_thread = None
         self.is_running = True
+        self._first_load = True  # İlk yükleme flag'i
+        self._filter_changed = False  # Filtre değişikliği flag'i
         
         self._setup_ui()
         self._connect_jira()
@@ -1351,21 +1383,21 @@ class JiraMonitorApp:
         self.user_var = tk.StringVar()
         self.user_combo = ttk.Combobox(filter_content, textvariable=self.user_var, width=22, state='readonly')
         self.user_combo.pack(side=tk.LEFT, padx=(0, 15))
-        self.user_combo.bind('<<ComboboxSelected>>', lambda e: self._load_issues())
+        self.user_combo.bind('<<ComboboxSelected>>', lambda e: self._on_filter_change())
         
         # Project filter
         ttk.Label(filter_content, text="Proje:").pack(side=tk.LEFT, padx=(0, 5))
         self.project_var = tk.StringVar()
         self.project_combo = ttk.Combobox(filter_content, textvariable=self.project_var, width=15, state='readonly')
         self.project_combo.pack(side=tk.LEFT, padx=(0, 15))
-        self.project_combo.bind('<<ComboboxSelected>>', lambda e: self._load_issues())
+        self.project_combo.bind('<<ComboboxSelected>>', lambda e: self._on_filter_change())
         
         # Status filter
         ttk.Label(filter_content, text="Status:").pack(side=tk.LEFT, padx=(0, 5))
         self.status_var = tk.StringVar()
         self.status_combo = ttk.Combobox(filter_content, textvariable=self.status_var, width=18, state='readonly')
         self.status_combo.pack(side=tk.LEFT, padx=(0, 15))
-        self.status_combo.bind('<<ComboboxSelected>>', lambda e: self._load_issues())
+        self.status_combo.bind('<<ComboboxSelected>>', lambda e: self._on_filter_change())
         
         # Buttons
         btn_frame = ttk.Frame(filter_content)
@@ -1557,11 +1589,25 @@ class JiraMonitorApp:
                 return
 
             issues = result.get("issues", [])
+            
+            # İlk yükleme veya filtre değişikliği değilse yeni issue'ları tespit et
+            new_issues = []
+            if not self._first_load and not self._filter_changed:
+                old_keys = {i.get("key", "") for i in self.issues}
+                new_issues = [i for i in issues if i.get("key", "") not in old_keys]
+            
             self.issues = issues
+            self._first_load = False  # İlk yükleme bitti
+            self._filter_changed = False  # Filtre değişikliği bitti
 
             def update_ui():
                 for item in self.tree.get_children():
                     self.tree.delete(item)
+
+                # Sadece yeşil (today) satırlar için bildirim gönder
+                today_issues = [i for i in new_issues if i.get("fields", {}).get("updated", "").startswith(datetime.now().strftime("%Y-%m-%d"))]
+                if today_issues:
+                    self._show_new_issue_notification(today_issues)
 
                 for i, issue in enumerate(issues, 1):
                     fields = issue.get("fields", {})
@@ -1659,6 +1705,11 @@ class JiraMonitorApp:
                 ))
         threading.Thread(target=do, daemon=True).start()
     
+    def _on_filter_change(self):
+        """Filtre değişikliği - bildirim verme"""
+        self._filter_changed = True
+        self._load_issues()
+    
     def _show_settings(self):
         """Ayarları göster"""
         dialog = SettingsDialog(self.root, self.config_manager)
@@ -1668,6 +1719,23 @@ class JiraMonitorApp:
             self._populate_filters()
             self._connect_jira()
             self._load_issues()
+    
+    def _show_new_issue_notification(self, new_issues):
+        """Yeni issue bildirimi gönder (sistem bildirimi)"""
+        if not self.config_manager.get("notifications_enabled", True):
+            return
+        
+        import subprocess
+        issue_keys = ", ".join([i.get("key", "") for i in new_issues])
+        title = f"Jira Monitor - {len(new_issues)} Yeni Issue"
+        message = f"Yeni issue'lar yüklendi:\n{issue_keys}"
+        
+        # Linux için notify-send
+        try:
+            subprocess.run(["notify-send", title, message], check=False)
+        except:
+            # Fallback: messagebox
+            messagebox.showinfo("Yeni Issue", message, parent=self.root)
     
     def _start_refresh(self):
         """Otomatik yenilemeyi başlat"""

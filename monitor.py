@@ -5,6 +5,8 @@ Jira Monitor - Bağımsız Masaüstü Uygulaması
 Python + Tkinter ile hazırlanmıştır.
 """
 
+__version__ = "1.0.3.202603261727"
+
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 import json
@@ -171,6 +173,13 @@ class JiraClient:
             return {"error": f"HTTP {e.code}: {e.reason}"}
         except Exception as e:
             return {"error": str(e)}
+
+    def get_issue_links(self, issue_key):
+        """Issue'nun linkli issue'larını getir"""
+        result = self._make_request(f"/rest/api/2/issue/{issue_key}?fields=issuelinks")
+        if "error" in result:
+            return []
+        return result.get("fields", {}).get("issuelinks", [])
 
 
 class ConfigManager:
@@ -660,12 +669,17 @@ class IssueDetailDialog:
         nb.add(tab_comments, text="  Yorumlar  ")
         self._build_comments_tab(tab_comments)
 
-        # --- Tab 3: Ekler ---
+        # --- Tab 3: Linkli İşler ---
+        tab_links = ttk.Frame(nb, padding=5)
+        nb.add(tab_links, text="  Linkli İşler  ")
+        self._build_links_tab(tab_links)
+
+        # --- Tab 4: Ekler ---
         tab_attach = ttk.Frame(nb, padding=5)
         nb.add(tab_attach, text="  Dosya Ekleri  ")
         self._build_attachments_tab(tab_attach)
 
-        # --- Tab 4: Durum Güncelle ---
+        # --- Tab 5: Durum Güncelle ---
         tab_status = ttk.Frame(nb, padding=5)
         nb.add(tab_status, text="  Durum Güncelle  ")
         self._build_status_tab(tab_status)
@@ -695,6 +709,10 @@ class IssueDetailDialog:
         self.txt_new_comment = tk.Text(parent, height=4, wrap=tk.WORD, font=("Segoe UI", 10))
         self.txt_new_comment.pack(fill=tk.X)
         ttk.Button(parent, text="Gönder", command=self._add_comment).pack(anchor=tk.E, pady=(4, 0))
+
+    def _build_links_tab(self, parent):
+        self.links_frame = ttk.Frame(parent)
+        self.links_frame.pack(fill=tk.BOTH, expand=True)
 
     def _build_attachments_tab(self, parent):
         cols = ("Dosya Adı", "Boyut", "Yükleyen", "Tarih")
@@ -732,10 +750,11 @@ class IssueDetailDialog:
             comments_resp = self.jira_client.get_issue_comments(self.issue_key)
             attachments = self.jira_client.get_attachments(self.issue_key)
             transitions = self.jira_client.get_transitions(self.issue_key)
-            self.dialog.after(0, lambda: self._populate(issue, comments_resp, attachments, transitions))
+            links = self.jira_client.get_issue_links(self.issue_key)
+            self.dialog.after(0, lambda: self._populate(issue, comments_resp, attachments, transitions, links))
         threading.Thread(target=fetch, daemon=True).start()
 
-    def _populate(self, issue, comments_resp, attachments, transitions=None):
+    def _populate(self, issue, comments_resp, attachments, transitions=None, links=None):
         if "error" in issue:
             self.lbl_key.config(text=f"Hata: {issue['error']}")
             return
@@ -804,6 +823,48 @@ class IssueDetailDialog:
                 tid = t.get("id", "")
                 self.status_listbox.insert(tk.END, name)
                 self._transitions[name] = tid
+
+        # Linkli İşler
+        for w in self.links_frame.winfo_children():
+            w.destroy()
+        
+        # Epic'leri ve diğer linkli issue'ları ayır
+        epics = []
+        other_links = []
+        
+        if links:
+            for link in links:
+                link_type = link.get("type", {}).get("name", "").lower()
+                inward = link.get("inwardIssue")
+                outward = link.get("outwardIssue")
+                
+                # Epic linklerini ayır
+                if "epic" in link_type:
+                    if inward:
+                        epics.append((inward.get("key", ""), inward.get("fields", {}).get("summary", "")))
+                    if outward:
+                        epics.append((outward.get("key", ""), outward.get("fields", {}).get("summary", "")))
+                else:
+                    if inward:
+                        other_links.append((link_type, "←", inward.get("key", ""), inward.get("fields", {}).get("summary", "")))
+                    if outward:
+                        other_links.append((link_type, "→", outward.get("key", ""), outward.get("fields", {}).get("summary", "")))
+        
+        # Epic Başlığı
+        if epics:
+            ttk.Label(self.links_frame, text="📋 Epic:", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, pady=(5, 2))
+            for epic_key, epic_summary in epics:
+                btn = ttk.Button(self.links_frame, text=f"{epic_key} - {epic_summary}",
+                               command=lambda k=epic_key: self._open_linked_issue(k))
+                btn.pack(fill=tk.X, pady=2, padx=(20, 0))
+        
+        # Linkli İşler Başlığı
+        if other_links:
+            ttk.Label(self.links_frame, text="🔗 Linkli İşler:", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, pady=(10, 2))
+            for link_type, direction, issue_key, summary in other_links:
+                btn = ttk.Button(self.links_frame, text=f"{direction} {link_type}: {issue_key} - {summary}",
+                               command=lambda k=issue_key: self._open_linked_issue(k))
+                btn.pack(fill=tk.X, pady=2)
 
     def _render_comments(self):
         for w in self.comments_inner.winfo_children():
@@ -902,6 +963,10 @@ class IssueDetailDialog:
         import webbrowser
         url = f"{self.jira_client.server_url}/browse/{self.issue_key}"
         webbrowser.open(url)
+
+    def _open_linked_issue(self, issue_key):
+        """Linkli issue'yu aç"""
+        IssueDetailDialog(self.parent, self.jira_client, issue_key, current_user=self.current_user, config_manager=self.config_manager)
 
     def _assign_to_me(self):
         """Issue'yu bağlı kullanıcıya ata"""
@@ -1185,7 +1250,7 @@ class JiraMonitorApp:
     
     def __init__(self, root):
         self.root = root
-        self.root.title("Jira Monitor")
+        self.root.title(f"Jira Monitor v{__version__}")
         self.root.geometry("1400x800")
         # Tam ekran — OS'a göre
         import sys
@@ -1313,7 +1378,7 @@ class JiraMonitorApp:
         tree_container = ttk.Frame(main_container)
         tree_container.pack(fill=tk.BOTH, expand=True)
         
-        columns = ("#", "Key", "Summary", "Status", "Assignee", "Project", "Updated", "Geçen Süre", "Ata")
+        columns = ("#", "Key", "Summary", "Status", "Assignee", "Reporter", "Project", "Updated", "Geçen Süre", "Ata")
         self.tree = ttk.Treeview(tree_container, columns=columns, show='headings', selectmode='browse')
         
         self.tree.heading("#", text="#")
@@ -1321,6 +1386,7 @@ class JiraMonitorApp:
         self.tree.heading("Summary", text="Summary")
         self.tree.heading("Status", text="Status")
         self.tree.heading("Assignee", text="Assignee")
+        self.tree.heading("Reporter", text="Reporter")
         self.tree.heading("Project", text="Project")
         self.tree.heading("Updated", text="Updated")
         self.tree.heading("Geçen Süre", text="Geçen Süre")
@@ -1328,9 +1394,10 @@ class JiraMonitorApp:
         
         self.tree.column("#", width=40, anchor='center')
         self.tree.column("Key", width=90, anchor='center')
-        self.tree.column("Summary", width=280)
+        self.tree.column("Summary", width=250)
         self.tree.column("Status", width=100, anchor='center')
-        self.tree.column("Assignee", width=130)
+        self.tree.column("Assignee", width=120)
+        self.tree.column("Reporter", width=120)
         self.tree.column("Project", width=80, anchor='center')
         self.tree.column("Updated", width=130, anchor='center')
         self.tree.column("Geçen Süre", width=100, anchor='center')
@@ -1502,6 +1569,7 @@ class JiraMonitorApp:
                     summary = fields.get("summary", "")
                     status_name = fields.get("status", {}).get("name", "")
                     assignee = fields.get("assignee", {}).get("displayName", "")
+                    reporter = fields.get("reporter", {}).get("displayName", "")
                     project_name = fields.get("project", {}).get("name", "")
                     updated = fields.get("updated", "")[:19].replace("T", " ") if fields.get("updated") else ""
                     
@@ -1509,7 +1577,7 @@ class JiraMonitorApp:
                     elapsed = self._calculate_elapsed_time(fields.get("updated", ""))
 
                     item_id = self.tree.insert("", tk.END, values=(
-                        i, key, summary, status_name, assignee, project_name, updated, elapsed, "👤 Ata"
+                        i, key, summary, status_name, assignee, reporter, project_name, updated, elapsed, "👤 Ata"
                     ))
 
                     tags = []

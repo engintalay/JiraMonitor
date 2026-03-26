@@ -371,14 +371,11 @@ class SettingsDialog:
         self.dialog.destroy()
     
     def _test_notification(self):
-        """Test bildirimi gönder"""
-        import subprocess
-        try:
-            subprocess.run(["notify-send", "Jira Monitor", "Bu bir test bildirimidir."], check=False)
-            messagebox.showinfo("Bildirim", "Test bildirimi gönderildi!", parent=self.dialog)
-        except Exception as e:
-            messagebox.showerror("Hata", f"Bildirim gönderilemedi: {e}", parent=self.dialog)
-    
+        """Test bildirimi gonder"""
+        send_notification("Jira Monitor", "Bu bir test bildirimidir.")
+        messagebox.showinfo("Bildirim", "Test bildirimi gonderildi!", parent=self.dialog)
+
+
     def _build_queue_tab(self, parent):
         ttk.Label(parent, text="Round-Robin Atama Listesi", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 8))
 
@@ -452,6 +449,40 @@ class SettingsDialog:
         queue = list(self.queue_listbox.get(0, tk.END))
         next_user = queue[0] if queue else "-"
         self.lbl_next.config(text=f"Sıradaki: {next_user}")
+
+
+def send_notification(title, message):
+    """Cross-platform bildirim (Windows + Linux + macOS)"""
+    import sys
+    try:
+        if sys.platform == "win32":
+            # Windows: winsound bip + fallback popup
+            try:
+                import winsound
+                winsound.MessageBeep(winsound.MB_ICONASTERISK)
+            except Exception:
+                pass
+            # System tray balloon tip via ctypes
+            try:
+                import ctypes
+                ctypes.windll.user32.MessageBeep(0x00000040)
+            except Exception:
+                pass
+        elif sys.platform == "darwin":
+            import subprocess
+            subprocess.run(
+                ["osascript", "-e",
+                 f'display notification "{message}" with title "{title}"'],
+                check=False, timeout=10
+            )
+        else:
+            import subprocess
+            subprocess.run(
+                ["notify-send", title, message],
+                check=False, timeout=10
+            )
+    except Exception:
+        pass
 
 
 def _jira_to_text(text):
@@ -1721,22 +1752,16 @@ class JiraMonitorApp:
             self._load_issues()
     
     def _show_new_issue_notification(self, new_issues):
-        """Yeni issue bildirimi gönder (sistem bildirimi)"""
+        """Yeni issue bildirimi gonder"""
         if not self.config_manager.get("notifications_enabled", True):
             return
-        
-        import subprocess
+
         issue_keys = ", ".join([i.get("key", "") for i in new_issues])
         title = f"Jira Monitor - {len(new_issues)} Yeni Issue"
-        message = f"Yeni issue'lar yüklendi:\n{issue_keys}"
-        
-        # Linux için notify-send
-        try:
-            subprocess.run(["notify-send", title, message], check=False)
-        except:
-            # Fallback: messagebox
-            messagebox.showinfo("Yeni Issue", message, parent=self.root)
-    
+        message = f"Yeni issue'lar yuklendi: {issue_keys}"
+
+        send_notification(title, message)
+
     def _start_refresh(self):
         """Otomatik yenilemeyi başlat"""
         def refresh():

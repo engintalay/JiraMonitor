@@ -5,4 +5,4 @@ if [ ! -f ".venv/bin/activate" ]; then
 fi
 
 source .venv/bin/activate
-python3 monitor.py
+https_proxy="" python3 monitor.py

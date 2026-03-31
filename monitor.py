@@ -649,7 +649,7 @@ def _insert_inline(widget, text, base_tag=None):
 class IssueDetailDialog:
     """Issue detay penceresi — Detaylar / Yorumlar / Ekler tabları"""
 
-    def __init__(self, parent, jira_client, issue_key, current_user=None, config_manager=None):
+    def __init__(self, parent, jira_client, issue_key, current_user=None, config_manager=None, issue_list=None):
         self.parent = parent
         self.jira_client = jira_client
         self.issue_key = issue_key
@@ -659,6 +659,8 @@ class IssueDetailDialog:
         self._comments = []  # cache
         self._original_desc = ""  # ham markup
         self._assignee_name = ""  # Issue'nun atandığı kişinin kullanıcı adı
+        self.issue_list = issue_list or []  # Tüm issue listesi
+        self._current_index = 0
 
         self.dialog = tk.Toplevel(parent)
         self.dialog.title(f"Issue: {issue_key}")
@@ -666,6 +668,8 @@ class IssueDetailDialog:
         self.dialog.resizable(True, True)
         self.dialog.transient(parent)
         self.dialog.bind("<Escape>", lambda e: self.dialog.destroy())
+        self.dialog.bind("<Left>", lambda e: self._prev_issue())
+        self.dialog.bind("<Right>", lambda e: self._next_issue())
 
         self._create_widgets()
         self._load_all()
@@ -680,6 +684,12 @@ class IssueDetailDialog:
         header_row.pack(fill=tk.X)
         self.lbl_key = ttk.Label(header_row, text="Yükleniyor…", font=("Segoe UI", 13, "bold"))
         self.lbl_key.pack(side=tk.LEFT)
+        self.btn_nav_prev = ttk.Button(header_row, text="◀ Geri", command=self._prev_issue, width=8)
+        self.btn_nav_prev.pack(side=tk.LEFT, padx=(15, 0))
+        self.lbl_nav = ttk.Label(header_row, text="", font=("Segoe UI", 9))
+        self.lbl_nav.pack(side=tk.LEFT, padx=5)
+        self.btn_nav_next = ttk.Button(header_row, text="İleri ▶", command=self._next_issue, width=8)
+        self.btn_nav_next.pack(side=tk.LEFT)
         ttk.Button(header_row, text="👤 Bana Ata", command=self._assign_to_me, width=12).pack(side=tk.RIGHT, padx=(5, 0))
         ttk.Button(header_row, text="👥 Ata", command=self._assign_from_dialog, width=10).pack(side=tk.RIGHT, padx=(5, 0))
         self.btn_update = ttk.Button(header_row, text="🔄 Güncelle", command=self._update_issue, width=12)
@@ -1024,6 +1034,62 @@ class IssueDetailDialog:
         import webbrowser
         url = f"{self.jira_client.server_url}/browse/{self.issue_key}"
         webbrowser.open(url)
+
+    def _prev_issue(self):
+        """Önceki issue'ya git"""
+        if not self.issue_list:
+            return
+        # Mevcut indexi bul
+        keys = [i.get("key", "") for i in self.issue_list]
+        try:
+            self._current_index = keys.index(self.issue_key)
+        except ValueError:
+            self._current_index = 0
+        # Öncekiye git
+        if self._current_index > 0:
+            self._current_index -= 1
+            self._navigate_to(self.issue_list[self._current_index].get("key", ""))
+
+    def _next_issue(self):
+        """Sonraki issue'ya git"""
+        if not self.issue_list:
+            return
+        # Mevcut indexi bul
+        keys = [i.get("key", "") for i in self.issue_list]
+        try:
+            self._current_index = keys.index(self.issue_key)
+        except ValueError:
+            self._current_index = 0
+        # Sonrakiye git
+        if self._current_index < len(self.issue_list) - 1:
+            self._current_index += 1
+            self._navigate_to(self.issue_list[self._current_index].get("key", ""))
+
+    def _navigate_to(self, issue_key):
+        """Belirtilen issue'ya git"""
+        if not issue_key:
+            return
+        self.issue_key = issue_key
+        self.dialog.title(f"Issue: {issue_key}")
+        self._load_all()
+        self._update_nav_buttons()
+
+    def _update_nav_buttons(self):
+        """Navigasyon butonlarını güncelle"""
+        if not self.issue_list:
+            self.btn_nav_prev.config(state=tk.DISABLED)
+            self.btn_nav_next.config(state=tk.DISABLED)
+            self.lbl_nav.config(text="")
+            return
+        keys = [i.get("key", "") for i in self.issue_list]
+        try:
+            idx = keys.index(self.issue_key)
+        except ValueError:
+            idx = 0
+        total = len(self.issue_list)
+        self.lbl_nav.config(text=f"{idx + 1} / {total}")
+        self.btn_nav_prev.config(state=tk.NORMAL if idx > 0 else tk.DISABLED)
+        self.btn_nav_next.config(state=tk.NORMAL if idx < total - 1 else tk.DISABLED)
 
     def _open_linked_issue(self, issue_key):
         """Linkli issue'yu aç"""
@@ -1688,7 +1754,7 @@ class JiraMonitorApp:
         item = self.tree.item(selection[0])
         key = item['values'][1]
         if key:
-            IssueDetailDialog(self.root, self.jira_client, key, current_user=self._current_user, config_manager=self.config_manager)
+            IssueDetailDialog(self.root, self.jira_client, key, current_user=self._current_user, config_manager=self.config_manager, issue_list=self.issues)
 
     def _on_tree_click(self, event):
         region = self.tree.identify_region(event.x, event.y)

@@ -717,12 +717,12 @@ class IssueDetailDialog:
         ttk.Button(main, text="Kapat", command=self.dialog.destroy).pack(side=tk.BOTTOM, anchor=tk.E, pady=(6, 0))
 
         # Notebook
-        nb = ttk.Notebook(main)
-        nb.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        self.nb = ttk.Notebook(main)
+        self.nb.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
 
         # --- Tab 1: Detaylar ---
-        tab_detail = ttk.Frame(nb, padding=5)
-        nb.add(tab_detail, text="  Detaylar  ")
+        tab_detail = ttk.Frame(self.nb, padding=5)
+        self.nb.add(tab_detail, text="  Detaylar  ")
 
         desc_header = ttk.Frame(tab_detail)
         desc_header.pack(fill=tk.X)
@@ -738,22 +738,22 @@ class IssueDetailDialog:
 
         # --- Tab 2: Yorumlar ---
         tab_comments = ttk.Frame(nb, padding=5)
-        nb.add(tab_comments, text="  Yorumlar  ")
+        self.nb.add(tab_comments, text="  Yorumlar  ")
         self._build_comments_tab(tab_comments)
 
         # --- Tab 3: Linkli İşler ---
         tab_links = ttk.Frame(nb, padding=5)
-        nb.add(tab_links, text="  Linkli İşler  ")
+        self.nb.add(tab_links, text="  Linkli İşler  ")
         self._build_links_tab(tab_links)
 
         # --- Tab 4: Ekler ---
         tab_attach = ttk.Frame(nb, padding=5)
-        nb.add(tab_attach, text="  Dosya Ekleri  ")
+        self.nb.add(tab_attach, text="  Dosya Ekleri  ")
         self._build_attachments_tab(tab_attach)
 
         # --- Tab 5: Bağlı Dosyalar ---
         tab_files = ttk.Frame(nb, padding=5)
-        nb.add(tab_files, text="  Bağlı Dosyalar  ")
+        self.nb.add(tab_files, text="  Bağlı Dosyalar  ")
         self._build_linked_files_tab(tab_files)
 
         # --- Tab 6: Durum Güncelle ---
@@ -1143,10 +1143,16 @@ class IssueDetailDialog:
         """Belirtilen issue'ya git"""
         if not issue_key:
             return
+        # Mevcut tab'ı kaydet
+        current_tab = self.nb.index(self.nb.select())
+        
         self.issue_key = issue_key
         self.dialog.title(f"Issue: {issue_key}")
         self._load_all()
         self._update_nav_buttons()
+        
+        # Aynı tab'a geri dön
+        self.nb.select(current_tab)
 
     def _update_nav_buttons(self):
         """Navigasyon butonlarını güncelle"""

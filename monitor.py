@@ -757,8 +757,8 @@ class IssueDetailDialog:
         self._build_linked_files_tab(tab_files)
 
         # --- Tab 6: Durum Güncelle ---
-        tab_status = ttk.Frame(nb, padding=5)
-        nb.add(tab_status, text="  Durum Güncelle  ")
+        tab_status = ttk.Frame(self.nb, padding=5)
+        self.nb.add(tab_status, text="  Durum Güncelle  ")
         self._build_status_tab(tab_status)
 
     def _build_comments_tab(self, parent):

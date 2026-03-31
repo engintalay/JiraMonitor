@@ -209,7 +209,8 @@ class ConfigManager:
             "extra_statuses": "",
             "assign_queue": [],
             "assign_queue_index": 0,
-            "notifications_enabled": True
+            "notifications_enabled": True,
+            "column_widths": {}
         }
     
     def save_config(self, config):
@@ -1532,6 +1533,17 @@ class JiraMonitorApp:
         self.tree.column("Geçen Süre", width=100, anchor='center')
         self.tree.column("Ata", width=140, anchor='center')
         
+        # Kaydedilmiş column genişliklerini yükle
+        saved_widths = self.config_manager.get("column_widths", {})
+        for col, width in saved_widths.items():
+            try:
+                self.tree.column(col, width=width)
+            except:
+                pass
+        
+        # Column genişlik değişikliğini kaydet
+        self.tree.bind("<Configure>", lambda e: self._save_column_widths())
+        
         # Scrollbars
         vsb = ttk.Scrollbar(tree_container, orient="vertical", command=self.tree.yview)
         hsb = ttk.Scrollbar(tree_container, orient="horizontal", command=self.tree.xview)
@@ -1770,6 +1782,18 @@ class JiraMonitorApp:
         values = self.tree.item(item, "values")
         key = values[1]
         self._assign_issue(key)
+
+    def _save_column_widths(self):
+        """Column genişliklerini kaydet"""
+        columns = self.tree["columns"]
+        widths = {}
+        for col in columns:
+            widths[col] = self.tree.column(col, "width")
+        self.config_manager.set("column_widths", widths)
+        # Debounce: sadece değişiklik olduysa kaydet
+        current = self.config_manager.get("column_widths", {})
+        if widths != current:
+            self.config_manager.save_config(self.config_manager.config)
 
     def _assign_issue(self, issue_key):
         """Round-robin ile sıradaki kullanıcıya ata"""

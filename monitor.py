@@ -823,9 +823,6 @@ class IssueDetailDialog:
             if isinstance(w, ttk.Button):
                 w.destroy()
         
-        # 19-20 karakterli, 20 ile başlayan numaraları bul
-        pattern = r'\b20\d{17,18}\b'
-        
         # Issue description ve summary'den bul
         fields = issue.get("fields", {})
         text_parts = []
@@ -842,21 +839,23 @@ class IssueDetailDialog:
             text_parts.append(body)
         
         all_text = " ".join(str(t) for t in text_parts)
-        file_numbers = re.findall(pattern, all_text)
         
-        if not file_numbers:
+        # Jira link formatını bul: [numara|url]
+        link_pattern = r'\[([^\]|]+)\|([^\]]+)\]'
+        links = re.findall(link_pattern, all_text)
+        
+        if not links:
             ttk.Label(self.files_frame, text="Dosya numarası bulunamadı", foreground="#888").pack(anchor=tk.W, pady=10)
             return
         
-        # Benzersiz numaralar
-        unique_numbers = list(set(file_numbers))
+        ttk.Label(self.files_frame, text=f"Bulunan dosya sayısı: {len(links)}", font=("Segoe UI", 9)).pack(anchor=tk.W, pady=(0, 5))
         
-        ttk.Label(self.files_frame, text=f"Bulunan dosya sayısı: {len(unique_numbers)}", font=("Segoe UI", 9)).pack(anchor=tk.W, pady=(0, 5))
-        
-        for fn in unique_numbers:
-            url = f"http://10.251.63.185/evdo/TakipGoruntule2.php?opcode=Serbest+Sorgula&ozelbelgeno={fn}&Sorgula=Sorgula"
-            btn = ttk.Button(self.files_frame, text=f"📄 {fn}", command=lambda u=url: webbrowser.open(u))
-            btn.pack(anchor=tk.W, pady=2, fill=tk.X)
+        for label, url in links:
+            label = label.strip()
+            # Geçerli URL mi kontrol et
+            if "10.251.63.185" in url or "evdo" in url:
+                btn = ttk.Button(self.files_frame, text=f"📄 {label}", command=lambda u=url: webbrowser.open(u))
+                btn.pack(anchor=tk.W, pady=2, fill=tk.X)
 
     def _build_status_tab(self, parent):
         ttk.Label(parent, text="Durum Değiştir:", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, pady=(0, 10))

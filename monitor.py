@@ -737,22 +737,22 @@ class IssueDetailDialog:
         sb.pack(side=tk.RIGHT, fill=tk.Y)
 
         # --- Tab 2: Yorumlar ---
-        tab_comments = ttk.Frame(nb, padding=5)
+        tab_comments = ttk.Frame(self.nb, padding=5)
         self.nb.add(tab_comments, text="  Yorumlar  ")
         self._build_comments_tab(tab_comments)
 
         # --- Tab 3: Linkli İşler ---
-        tab_links = ttk.Frame(nb, padding=5)
+        tab_links = ttk.Frame(self.nb, padding=5)
         self.nb.add(tab_links, text="  Linkli İşler  ")
         self._build_links_tab(tab_links)
 
         # --- Tab 4: Ekler ---
-        tab_attach = ttk.Frame(nb, padding=5)
+        tab_attach = ttk.Frame(self.nb, padding=5)
         self.nb.add(tab_attach, text="  Dosya Ekleri  ")
         self._build_attachments_tab(tab_attach)
 
         # --- Tab 5: Bağlı Dosyalar ---
-        tab_files = ttk.Frame(nb, padding=5)
+        tab_files = ttk.Frame(self.nb, padding=5)
         self.nb.add(tab_files, text="  Bağlı Dosyalar  ")
         self._build_linked_files_tab(tab_files)
 

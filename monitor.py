@@ -1541,8 +1541,11 @@ class JiraMonitorApp:
             except:
                 pass
         
-        # Column genişlik değişikliğini kaydet
-        self.tree.bind("<Configure>", lambda e: self._save_column_widths())
+        # Column genişliklerini düzenli kontrol et ve kaydet
+        def check_and_save():
+            self._save_column_widths()
+            self.root.after(1000, check_and_save)
+        self.root.after(1000, check_and_save)
         
         # Scrollbars
         vsb = ttk.Scrollbar(tree_container, orient="vertical", command=self.tree.yview)

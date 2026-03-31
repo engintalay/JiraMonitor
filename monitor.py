@@ -751,7 +751,12 @@ class IssueDetailDialog:
         nb.add(tab_attach, text="  Dosya Ekleri  ")
         self._build_attachments_tab(tab_attach)
 
-        # --- Tab 5: Durum Güncelle ---
+        # --- Tab 5: Bağlı Dosyalar ---
+        tab_files = ttk.Frame(nb, padding=5)
+        nb.add(tab_files, text="  Bağlı Dosyalar  ")
+        self._build_linked_files_tab(tab_files)
+
+        # --- Tab 6: Durum Güncelle ---
         tab_status = ttk.Frame(nb, padding=5)
         nb.add(tab_status, text="  Durum Güncelle  ")
         self._build_status_tab(tab_status)
@@ -801,6 +806,57 @@ class IssueDetailDialog:
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
         self._attach_urls = {}  # item_id -> {filename, content_url, mime_type}
         self.attach_tree.bind("<Double-1>", self._open_attachment)
+
+    def _build_linked_files_tab(self, parent):
+        """Bağlı dosyalar tab'ı - 19-20 karakterli, 20 ile başlayan dosya numaralarını bulur"""
+        self.files_frame = ttk.Frame(parent)
+        self.files_frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(self.files_frame, text="İş veya yorum içinde geçen dosya numaraları", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, pady=(0, 10))
+
+    def _find_and_show_linked_files(self, issue):
+        """Dosya numaralarını bul ve butonları göster"""
+        import re
+        import webbrowser
+        
+        # Eski butonları temizle
+        for w in self.files_frame.winfo_children():
+            if isinstance(w, ttk.Button):
+                w.destroy()
+        
+        # 19-20 karakterli, 20 ile başlayan numaraları bul
+        pattern = r'\b20\d{17,18}\b'
+        
+        # Issue description ve summary'den bul
+        fields = issue.get("fields", {})
+        text_parts = []
+        
+        summary = fields.get("summary", "") or ""
+        description = fields.get("description", "") or ""
+        
+        text_parts.append(summary)
+        text_parts.append(description)
+        
+        # Yorumlardan bul
+        for comment in self._comments:
+            body = comment.get("body", "") or ""
+            text_parts.append(body)
+        
+        all_text = " ".join(str(t) for t in text_parts)
+        file_numbers = re.findall(pattern, all_text)
+        
+        if not file_numbers:
+            ttk.Label(self.files_frame, text="Dosya numarası bulunamadı", foreground="#888").pack(anchor=tk.W, pady=10)
+            return
+        
+        # Benzersiz numaralar
+        unique_numbers = list(set(file_numbers))
+        
+        ttk.Label(self.files_frame, text=f"Bulunan dosya sayısı: {len(unique_numbers)}", font=("Segoe UI", 9)).pack(anchor=tk.W, pady=(0, 5))
+        
+        for fn in unique_numbers:
+            url = f"http://10.251.63.185/evdo/TakipGoruntule2.php?opcode=Serbest+Sorgula&ozelbelgeno={fn}&Sorgula=Sorgula"
+            btn = ttk.Button(self.files_frame, text=f"📄 {fn}", command=lambda u=url: webbrowser.open(u))
+            btn.pack(anchor=tk.W, pady=2, fill=tk.X)
 
     def _build_status_tab(self, parent):
         ttk.Label(parent, text="Durum Değiştir:", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, pady=(0, 10))
@@ -869,6 +925,9 @@ class IssueDetailDialog:
         if "error" not in comments_resp:
             self._comments = comments_resp.get("fields", {}).get("comment", {}).get("comments", [])
         self._render_comments()
+
+        # Bağlı dosyaları bul ve göster
+        self._find_and_show_linked_files(issue)
 
         # Ekler
         for row in self.attach_tree.get_children():

@@ -818,10 +818,9 @@ class IssueDetailDialog:
         import re
         import webbrowser
         
-        # Eski butonları temizle
+        # Frame içini temizle
         for w in self.files_frame.winfo_children():
-            if isinstance(w, ttk.Button):
-                w.destroy()
+            w.destroy()
         
         # Issue description ve summary'den bul
         fields = issue.get("fields", {})

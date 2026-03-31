@@ -840,22 +840,37 @@ class IssueDetailDialog:
         
         all_text = " ".join(str(t) for t in text_parts)
         
-        # Jira link formatını bul: [numara|url]
-        link_pattern = r'\[([^\]|]+)\|([^\]]+)\]'
-        links = re.findall(link_pattern, all_text)
+        found_items = []
         
-        if not links:
+        # 1. Jira link formatı: [numara|url]
+        link_pattern = r'\[([^\]|]+)\|([^\]]+)\]'
+        for label, url in re.findall(link_pattern, all_text):
+            if "10.251.63.185" in url or "evdo" in url:
+                found_items.append((label.strip(), url))
+        
+        # 2. TCKN: tc: 16150436736 (11 haneli)
+        tckn_pattern = r'tc:\s*(\d{11})'
+        for match in re.finditer(tckn_pattern, all_text, re.IGNORECASE):
+            tckn = match.group(1)
+            url = f"http://10.251.63.185/evdo/TakipGoruntule2.php?tckn={tckn}&opcode=TCKNSORGULA"
+            found_items.append((f"TC: {tckn}", url))
+        
+        # 3. Hasar Belgesi: hb: 2024011164Elh0000014 (2024 ile başlayan, harf ve rakam içeren)
+        hb_pattern = r'hb:\s*(\d{4}\d*[A-Za-z]\w+)'
+        for match in re.finditer(hb_pattern, all_text, re.IGNORECASE):
+            hb = match.group(1)
+            url = f"http://10.251.63.185/evdo/TakipGoruntule2.php?vd=&ozelbelgeno={hb}&opcode=Serbest+Sorgula"
+            found_items.append((f"HB: {hb}", url))
+        
+        if not found_items:
             ttk.Label(self.files_frame, text="Dosya numarası bulunamadı", foreground="#888").pack(anchor=tk.W, pady=10)
             return
         
-        ttk.Label(self.files_frame, text=f"Bulunan dosya sayısı: {len(links)}", font=("Segoe UI", 9)).pack(anchor=tk.W, pady=(0, 5))
+        ttk.Label(self.files_frame, text=f"Bulunan dosya sayısı: {len(found_items)}", font=("Segoe UI", 9)).pack(anchor=tk.W, pady=(0, 5))
         
-        for label, url in links:
-            label = label.strip()
-            # Geçerli URL mi kontrol et
-            if "10.251.63.185" in url or "evdo" in url:
-                btn = ttk.Button(self.files_frame, text=f"📄 {label}", command=lambda u=url: webbrowser.open(u))
-                btn.pack(anchor=tk.W, pady=2, fill=tk.X)
+        for label, url in found_items:
+            btn = ttk.Button(self.files_frame, text=f"📄 {label}", command=lambda u=url: webbrowser.open(u))
+            btn.pack(anchor=tk.W, pady=2, fill=tk.X)
 
     def _build_status_tab(self, parent):
         ttk.Label(parent, text="Durum Değiştir:", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, pady=(0, 10))

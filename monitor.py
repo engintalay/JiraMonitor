@@ -1596,11 +1596,11 @@ class JiraMonitorApp:
         ttk.Button(search_frame, text="Temizle", command=lambda: self.search_var.set("")).pack(side=tk.LEFT, padx=5)
         
         # Treeview ve scrollbar'lar için ayrı frame (grid kullanacak)
-        tree_inner = ttk.Frame(tree_container)
-        tree_inner.pack(fill=tk.BOTH, expand=True)
+        self.tree_inner = ttk.Frame(tree_container)
+        self.tree_inner.pack(fill=tk.BOTH, expand=True)
         
         columns = ("#", "Key", "Summary", "Status", "Assignee", "Reporter", "Project", "Updated", "Geçen Süre", "Ata")
-        self.tree = ttk.Treeview(tree_inner, columns=columns, show='headings', selectmode='browse')
+        self.tree = ttk.Treeview(self.tree_inner, columns=columns, show='headings', selectmode='browse')
         
         self.tree.heading("#", text="#")
         self.tree.heading("Key", text="Key")
@@ -1639,16 +1639,16 @@ class JiraMonitorApp:
         self.root.after(1000, check_and_save)
         
         # Scrollbars
-        vsb = ttk.Scrollbar(tree_inner, orient="vertical", command=self.tree.yview)
-        hsb = ttk.Scrollbar(tree_inner, orient="horizontal", command=self.tree.xview)
+        vsb = ttk.Scrollbar(self.tree_inner, orient="vertical", command=self.tree.yview)
+        hsb = ttk.Scrollbar(self.tree_inner, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
         
         self.tree.grid(row=0, column=0, sticky='nsew')
         vsb.grid(row=0, column=1, sticky='ns')
         hsb.grid(row=1, column=0, sticky='ew')
         
-        tree_inner.grid_columnconfigure(0, weight=1)
-        tree_inner.grid_rowconfigure(0, weight=1)
+        self.tree_inner.grid_columnconfigure(0, weight=1)
+        self.tree_inner.grid_rowconfigure(0, weight=1)
         
         # Double click to view details
         self.tree.bind('<Double-1>', self._show_issue_details)
@@ -1865,18 +1865,47 @@ class JiraMonitorApp:
     def _filter_tree(self, *args):
         """Summary'de arama filtresi"""
         search_text = self.search_var.get().lower()
+    def _filter_tree(self, *args):
+        """Summary'de arama filtresi"""
+        search_text = self.search_var.get().lower()
         
-        # Önce tüm item'ları göster
+        # Mevcut tüm item'ları temizle
         for item in self.tree.get_children():
-            self.tree.reattach(item, "", tk.END)
+            self.tree.delete(item)
         
-        # Sonra filtrele
-        if search_text:
-            for item in self.tree.get_children():
-                values = self.tree.item(item, "values")
-                summary = values[2].lower() if len(values) > 2 else ""
-                if search_text not in summary:
-                    self.tree.detach(item)
+        # Filtrele ve yeniden ekle
+        for i, issue in enumerate(self.issues, 1):
+            fields = issue.get("fields", {})
+            summary = fields.get("summary", "")
+            
+            # Filtrele
+            if search_text and search_text not in summary.lower():
+                continue
+            
+            key = issue.get("key", "")
+            status_name = fields.get("status", {}).get("name", "")
+            assignee = fields.get("assignee", {}).get("displayName", "")
+            reporter = fields.get("reporter", {}).get("displayName", "")
+            project_name = fields.get("project", {}).get("name", "")
+            updated = fields.get("updated", "")[:19].replace("T", " ") if fields.get("updated") else ""
+            elapsed = self._calculate_elapsed_time(fields.get("updated", ""))
+            
+            item_id = self.tree.insert("", tk.END, values=(
+                i, key, summary, status_name, assignee, reporter, project_name, updated, elapsed, "👤 Ata"
+            ))
+            
+            # Tag'leri ekle
+            tags = []
+            if project_name == "EVDBS":
+                tags.append('evdbs')
+            elif project_name == "EPDK":
+                tags.append('epdk')
+            elif project_name == "Yazılım Destek":
+                tags.append('destek')
+            if updated and updated.startswith(datetime.now().strftime("%Y-%m-%d")):
+                tags.append('today')
+            if tags:
+                self.tree.item(item_id, tags=tuple(tags))
 
     def _on_tree_click(self, event):
         region = self.tree.identify_region(event.x, event.y)

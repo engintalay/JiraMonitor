@@ -1586,6 +1586,15 @@ class JiraMonitorApp:
         tree_container = ttk.Frame(main_container)
         tree_container.pack(fill=tk.BOTH, expand=True)
         
+        # Summary arama alanı
+        search_frame = ttk.Frame(tree_container)
+        search_frame.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(search_frame, text="🔍 Summary'de ara:").pack(side=tk.LEFT, padx=(0, 5))
+        self.search_var = tk.StringVar()
+        self.search_var.trace("w", self._filter_tree)
+        ttk.Entry(search_frame, textvariable=self.search_var, width=30).pack(side=tk.LEFT)
+        ttk.Button(search_frame, text="Temizle", command=lambda: self.search_var.set("")).pack(side=tk.LEFT, padx=5)
+        
         columns = ("#", "Key", "Summary", "Status", "Assignee", "Reporter", "Project", "Updated", "Geçen Süre", "Ata")
         self.tree = ttk.Treeview(tree_container, columns=columns, show='headings', selectmode='browse')
         
@@ -1848,6 +1857,17 @@ class JiraMonitorApp:
         key = item['values'][1]
         if key:
             IssueDetailDialog(self.root, self.jira_client, key, current_user=self._current_user, config_manager=self.config_manager, issue_list=self.issues)
+
+    def _filter_tree(self, *args):
+        """Summary'de arama filtresi"""
+        search_text = self.search_var.get().lower()
+        for item in self.tree.get_children():
+            values = self.tree.item(item, "values")
+            summary = values[2].lower() if len(values) > 2 else ""
+            if search_text and search_text not in summary:
+                self.tree.detach(item)
+            else:
+                self.tree.reattach(item, "", tk.END)
 
     def _on_tree_click(self, event):
         region = self.tree.identify_region(event.x, event.y)

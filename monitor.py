@@ -937,8 +937,8 @@ class IssueDetailDialog:
         self._comments = []
         if "error" not in comments_resp:
             self._comments = comments_resp.get("fields", {}).get("comment", {}).get("comments", [])
-            # Tarihe göre sırala (en eski en üstte)
-            self._comments.sort(key=lambda c: c.get("created", ""))
+            # Tarihe göre sırala (en yeni en üstte)
+            self._comments.sort(key=lambda c: c.get("created", ""), reverse=True)
         self._render_comments()
 
         # Bağlı dosyaları bul ve göster

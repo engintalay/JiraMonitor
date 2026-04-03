@@ -1016,10 +1016,12 @@ class IssueDetailDialog:
         for w in self.comments_inner.winfo_children():
             w.destroy()
 
-        # Mevcut kullanıcı bilgisi (accountId veya name ile karşılaştırma)
+        # Mevcut kullanıcı bilgisi (config'deki username dahil)
         current_account = (self.current_user or {}).get("accountId", "")
         current_name = (self.current_user or {}).get("name", "")
         current_display = (self.current_user or {}).get("displayName", "")
+        # Config'den gelen username
+        config_username = self.config_manager.get("username", "").strip() if self.config_manager else ""
 
         for c in self._comments:
             cid = c.get("id", "")
@@ -1042,8 +1044,8 @@ class IssueDetailDialog:
             render_jira_markup(txt, c.get("body", "") or "")
             txt.configure(state=tk.DISABLED)
 
-            # Sadece kendi yorumunu düzenleyebilir (accountId, name veya displayName ile karşılaştır)
-            is_own = (author_id == current_account) or (author_name == current_name) or (author == current_display)
+            # Sadece kendi yorumunu düzenleyebilir
+            is_own = (author_id == current_account) or (author_name == current_name) or (author == current_display) or (author_name == config_username)
             if is_own:
                 ttk.Button(frame, text="Düzenle", width=8,
                            command=lambda t=txt, ci=cid, b=c.get("body",""): self._edit_comment(t, ci, b)).pack(anchor=tk.E, pady=(4, 0))

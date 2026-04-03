@@ -1016,12 +1016,16 @@ class IssueDetailDialog:
         for w in self.comments_inner.winfo_children():
             w.destroy()
 
+        # Mevcut kullanıcı bilgisi (accountId veya name ile karşılaştırma)
         current_account = (self.current_user or {}).get("accountId", "")
+        current_name = (self.current_user or {}).get("name", "")
+        current_display = (self.current_user or {}).get("displayName", "")
 
         for c in self._comments:
             cid = c.get("id", "")
             author = (c.get("author") or {}).get("displayName", "")
             author_id = (c.get("author") or {}).get("accountId", "")
+            author_name = (c.get("author") or {}).get("name", "")
             created = c.get("created", "")[:19].replace("T", " ")
 
             frame = ttk.Frame(self.comments_inner, relief="groove", padding=6)
@@ -1038,8 +1042,9 @@ class IssueDetailDialog:
             render_jira_markup(txt, c.get("body", "") or "")
             txt.configure(state=tk.DISABLED)
 
-            # Sadece kendi yorumunu düzenleyebilir
-            if author_id == current_account:
+            # Sadece kendi yorumunu düzenleyebilir (accountId, name veya displayName ile karşılaştır)
+            is_own = (author_id == current_account) or (author_name == current_name) or (author == current_display)
+            if is_own:
                 ttk.Button(frame, text="Düzenle", width=8,
                            command=lambda t=txt, ci=cid, b=c.get("body",""): self._edit_comment(t, ci, b)).pack(anchor=tk.E, pady=(4, 0))
 

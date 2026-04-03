@@ -4,18 +4,11 @@
 VERSION_FILE=".version"
 VERSION=$(cat "$VERSION_FILE")
 
-# Versiyon numarasını artır - son part'ı alıp artır
-IFS='.' read -ra PARTS <<< "$VERSION"
-LAST_PART="${PARTS[-1]}"
-# Sayısal kısım
-NUM_PART=$(echo "$LAST_PART" | grep -oE '^[0-9]+')
-if [ -z "$NUM_PART" ]; then
-    NUM_PART=1
-else
-    NUM_PART=$((NUM_PART + 1))
-fi
+# Versiyon numarasını artır (1.0.3 -> 1.0.4)
+IFS='.' read -r major minor patch <<< "$VERSION"
+minor=$((minor + 1))
 TIMESTAMP=$(date +"%Y%m%d%H%M")
-NEW_VERSION="1.0.3.$TIMESTAMP$NUM_PART"
+NEW_VERSION="$major.$minor.$patch.$TIMESTAMP"
 
 # Versiyon dosyasını güncelle
 echo "$NEW_VERSION" > "$VERSION_FILE"

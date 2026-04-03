@@ -1865,13 +1865,18 @@ class JiraMonitorApp:
     def _filter_tree(self, *args):
         """Summary'de arama filtresi"""
         search_text = self.search_var.get().lower()
+        
+        # Önce tüm item'ları göster
         for item in self.tree.get_children():
-            values = self.tree.item(item, "values")
-            summary = values[2].lower() if len(values) > 2 else ""
-            if search_text and search_text not in summary:
-                self.tree.detach(item)
-            else:
-                self.tree.reattach(item, "", tk.END)
+            self.tree.reattach(item, "", tk.END)
+        
+        # Sonra filtrele
+        if search_text:
+            for item in self.tree.get_children():
+                values = self.tree.item(item, "values")
+                summary = values[2].lower() if len(values) > 2 else ""
+                if search_text not in summary:
+                    self.tree.detach(item)
 
     def _on_tree_click(self, event):
         region = self.tree.identify_region(event.x, event.y)

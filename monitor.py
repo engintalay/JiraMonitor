@@ -1595,8 +1595,12 @@ class JiraMonitorApp:
         ttk.Entry(search_frame, textvariable=self.search_var, width=30).pack(side=tk.LEFT)
         ttk.Button(search_frame, text="Temizle", command=lambda: self.search_var.set("")).pack(side=tk.LEFT, padx=5)
         
+        # Treeview ve scrollbar'lar için ayrı frame (grid kullanacak)
+        tree_inner = ttk.Frame(tree_container)
+        tree_inner.pack(fill=tk.BOTH, expand=True)
+        
         columns = ("#", "Key", "Summary", "Status", "Assignee", "Reporter", "Project", "Updated", "Geçen Süre", "Ata")
-        self.tree = ttk.Treeview(tree_container, columns=columns, show='headings', selectmode='browse')
+        self.tree = ttk.Treeview(tree_inner, columns=columns, show='headings', selectmode='browse')
         
         self.tree.heading("#", text="#")
         self.tree.heading("Key", text="Key")
@@ -1635,16 +1639,16 @@ class JiraMonitorApp:
         self.root.after(1000, check_and_save)
         
         # Scrollbars
-        vsb = ttk.Scrollbar(tree_container, orient="vertical", command=self.tree.yview)
-        hsb = ttk.Scrollbar(tree_container, orient="horizontal", command=self.tree.xview)
+        vsb = ttk.Scrollbar(tree_inner, orient="vertical", command=self.tree.yview)
+        hsb = ttk.Scrollbar(tree_inner, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
         
         self.tree.grid(row=0, column=0, sticky='nsew')
         vsb.grid(row=0, column=1, sticky='ns')
         hsb.grid(row=1, column=0, sticky='ew')
         
-        tree_container.grid_columnconfigure(0, weight=1)
-        tree_container.grid_rowconfigure(0, weight=1)
+        tree_inner.grid_columnconfigure(0, weight=1)
+        tree_inner.grid_rowconfigure(0, weight=1)
         
         # Double click to view details
         self.tree.bind('<Double-1>', self._show_issue_details)

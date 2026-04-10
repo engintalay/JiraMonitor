@@ -5,7 +5,7 @@ Jira Monitor - Bağımsız Masaüstü Uygulaması
 Python + Tkinter ile hazırlanmıştır.
 """
 
-__version__ = "1.2.3.202604030915.202604030915"
+__version__ = "1.3.3.202604030915.202604030915.202604101831"
 
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
@@ -1604,6 +1604,10 @@ class JiraMonitorApp:
         ttk.Entry(search_frame, textvariable=self.search_var, width=30).pack(side=tk.LEFT)
         ttk.Button(search_frame, text="Temizle", command=lambda: self.search_var.set("")).pack(side=tk.LEFT, padx=5)
         
+        # Seçili issue'ya atama butonu
+        self.btn_assign_selected = ttk.Button(search_frame, text="👤 Seçiliye Ata", command=self._assign_selected_issue, width=15)
+        self.btn_assign_selected.pack(side=tk.LEFT, padx=(10, 0))
+        
         # Treeview ve scrollbar'lar için ayrı frame (grid kullanacak)
         self.tree_inner = ttk.Frame(tree_container)
         self.tree_inner.pack(fill=tk.BOTH, expand=True)
@@ -1620,7 +1624,7 @@ class JiraMonitorApp:
         self.tree.heading("Project", text="Project")
         self.tree.heading("Updated", text="Updated")
         self.tree.heading("Geçen Süre", text="Geçen Süre")
-        self.tree.heading("Ata", text="İş Ata")
+        self.tree.heading("Ata", text="")
         
         self.tree.column("#", width=40, anchor='center')
         self.tree.column("Key", width=90, anchor='center')
@@ -1631,7 +1635,7 @@ class JiraMonitorApp:
         self.tree.column("Project", width=80, anchor='center')
         self.tree.column("Updated", width=130, anchor='center')
         self.tree.column("Geçen Süre", width=100, anchor='center')
-        self.tree.column("Ata", width=140, anchor='center')
+        self.tree.column("Ata", width=50, anchor='center')
         
         # Kaydedilmiş column genişliklerini yükle
         saved_widths = self.config_manager.get("column_widths", {})
@@ -1835,7 +1839,7 @@ class JiraMonitorApp:
                     elapsed = self._calculate_elapsed_time(fields.get("updated", ""))
 
                     item_id = self.tree.insert("", tk.END, values=(
-                        i, key, summary, status_name, assignee, reporter, project_name, updated, elapsed, "👤 Ata"
+                        i, key, summary, status_name, assignee, reporter, project_name, updated, elapsed, ""
                     ))
 
                     tags = []
@@ -1874,9 +1878,6 @@ class JiraMonitorApp:
     def _filter_tree(self, *args):
         """Summary'de arama filtresi"""
         search_text = self.search_var.get().lower()
-    def _filter_tree(self, *args):
-        """Summary'de arama filtresi"""
-        search_text = self.search_var.get().lower()
         
         # Mevcut tüm item'ları temizle
         for item in self.tree.get_children():
@@ -1900,7 +1901,7 @@ class JiraMonitorApp:
             elapsed = self._calculate_elapsed_time(fields.get("updated", ""))
             
             item_id = self.tree.insert("", tk.END, values=(
-                i, key, summary, status_name, assignee, reporter, project_name, updated, elapsed, "👤 Ata"
+                i, key, summary, status_name, assignee, reporter, project_name, updated, elapsed, ""
             ))
             
             # Tag'leri ekle
@@ -1915,21 +1916,11 @@ class JiraMonitorApp:
                 tags.append('today')
             if tags:
                 self.tree.item(item_id, tags=tuple(tags))
+        
+        self._render_assign_buttons()
 
     def _on_tree_click(self, event):
-        region = self.tree.identify_region(event.x, event.y)
-        if region != "cell":
-            return
-        col = self.tree.identify_column(event.x)
-        # "Ata" 9. kolon → #9
-        if col != "#9":
-            return
-        item = self.tree.identify_row(event.y)
-        if not item:
-            return
-        values = self.tree.item(item, "values")
-        key = values[1]
-        self._assign_issue(key)
+        pass  # Tıklama ile atama yapma, üstten buton kullan
 
     def _save_column_widths(self):
         """Column genişliklerini kaydet"""
@@ -1943,6 +1934,25 @@ class JiraMonitorApp:
         if widths != current:
             self.config_manager.save_config(self.config_manager.config)
 
+    def _resize_button_canvas(self):
+        """Canvas'ı treeview genişliğine ayarla"""
+        pass  # Butonlar artık doğrudan treeview'de
+    
+    def _render_assign_buttons(self):
+        """Treeview'deki her satır için Ata butonu oluştur"""
+        pass  # Butonlar artık doğrudan treeview'de
+    
+    def _assign_selected_issue(self):
+        """Seçili issue'ya atama yap"""
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showwarning("Seçim Yok", "Lütfen bir issue seçin.", parent=self.root)
+            return
+        item = self.tree.item(selection[0])
+        key = item['values'][1]
+        if key:
+            self._assign_issue(key)
+    
     def _assign_issue(self, issue_key):
         """Round-robin ile sıradaki kullanıcıya ata"""
         queue = self.config_manager.get("assign_queue", [])

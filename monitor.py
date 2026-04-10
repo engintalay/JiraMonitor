@@ -5,7 +5,7 @@ Jira Monitor - Bağımsız Masaüstü Uygulaması
 Python + Tkinter ile hazırlanmıştır.
 """
 
-__version__ = "1.3.3.202604030915.202604030915.202604101831"
+__version__ = "1.4.3.202604030915.202604030915.202604101831.202604101852"
 
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
@@ -1939,7 +1939,6 @@ class JiraMonitorApp:
         pass  # Butonlar artık doğrudan treeview'de
     
     def _render_assign_buttons(self):
-        """Treeview'deki her satır için Ata butonu oluştur"""
         pass  # Butonlar artık doğrudan treeview'de
     
     def _assign_selected_issue(self):

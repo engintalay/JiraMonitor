@@ -2,13 +2,12 @@
 
 # Versiyon dosyasını oku
 VERSION_FILE=".version"
-VERSION=$(cat "$VERSION_FILE")
+VERSION=$(cat "$VERSION_FILE" | tr -d '\n')
 
-# Versiyon numarasını artır (1.0.3 -> 1.0.4)
+# Versiyon numarasını artır (1.4.4 -> 1.4.5)
 IFS='.' read -r major minor patch <<< "$VERSION"
-minor=$((minor + 1))
-TIMESTAMP=$(date +"%Y%m%d%H%M")
-NEW_VERSION="$major.$minor.$patch.$TIMESTAMP"
+patch=$((patch + 1))
+NEW_VERSION="$major.$minor.$patch"
 
 # Versiyon dosyasını güncelle
 echo "$NEW_VERSION" > "$VERSION_FILE"

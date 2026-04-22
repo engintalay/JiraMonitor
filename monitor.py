@@ -383,7 +383,8 @@ class SettingsDialog:
         # Mevcut sıra göstergesi
         idx = self.config_manager.get("assign_queue_index", 0)
         queue = self.config_manager.get("assign_queue", [])
-        next_user = queue[idx % len(queue)] if queue else "-"
+        active_queue = [u for u in queue if not u.startswith("!")]
+        next_user = active_queue[idx % len(active_queue)] if active_queue else "-"
         self.lbl_next = ttk.Label(parent, text=f"Sıradaki: {next_user}", foreground="#0078d7")
         self.lbl_next.pack(anchor=tk.W, pady=(0, 8))
 
@@ -405,6 +406,7 @@ class SettingsDialog:
         ttk.Button(btn_col, text="▲ Yukarı", width=12, command=self._queue_up).pack(pady=2)
         ttk.Button(btn_col, text="▼ Aşağı", width=12, command=self._queue_down).pack(pady=2)
         ttk.Button(btn_col, text="✕ Sil", width=12, command=self._queue_remove).pack(pady=2)
+        ttk.Button(btn_col, text="Pasif/Pasif", width=12, command=self._queue_toggle_active).pack(pady=2)
         ttk.Button(btn_col, text="Sıfırla", width=12, command=self._queue_reset).pack(pady=(12, 2))
 
         # Kullanıcı ekle
@@ -444,11 +446,28 @@ class SettingsDialog:
             self.queue_listbox.insert(i + 1, val)
             self.queue_listbox.selection_set(i + 1)
 
+    def _queue_toggle_active(self):
+        """Seçili kullanıcıyı pasif/pasif yap"""
+        sel = self.queue_listbox.curselection()
+        if not sel:
+            return
+        i = sel[0]
+        val = self.queue_listbox.get(i)
+        # Kullanıcı adının başına "!" ekleyerek pasif yap
+        if val.startswith("!"):
+            val = val[1:]  # Pasiften çıkar
+        else:
+            val = "!" + val  # Pasif yap
+        self.queue_listbox.delete(i)
+        self.queue_listbox.insert(i, val)
+        self.queue_listbox.selection_set(i)
+
     def _queue_reset(self):
         self.config_manager.set("assign_queue_index", 0)
         self.config_manager.save_config(self.config_manager.config)
         queue = list(self.queue_listbox.get(0, tk.END))
-        next_user = queue[0] if queue else "-"
+        active_queue = [u for u in queue if not u.startswith("!")]
+        next_user = active_queue[0] if active_queue else "-"
         self.lbl_next.config(text=f"Sıradaki: {next_user}")
 
 
@@ -1555,6 +1574,16 @@ class JiraMonitorApp:
         self.lbl_count = ttk.Label(header_frame, text="0 issue", style='Subtitle.TLabel')
         self.lbl_count.pack(side=tk.RIGHT, padx=20)
         
+        # JQL Sorgu alanı
+        jql_frame = ttk.Frame(main_container)
+        jql_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Label(jql_frame, text="JQL Sorgu:", font=('Segoe UI', 9, 'bold')).pack(side=tk.LEFT, padx=(0, 5))
+        self.jql_var = tk.StringVar()
+        self.jql_entry = ttk.Entry(jql_frame, textvariable=self.jql_var, width=80, font=('Segoe UI', 10))
+        self.jql_entry.pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(jql_frame, text="▶ Çalıştır", command=self._run_jql_query, width=12).pack(side=tk.LEFT)
+        
         # Filter frame
         filter_frame = ttk.LabelFrame(main_container, text="Filtreler", padding="12")
         filter_frame.pack(fill=tk.X, pady=(0, 10))
@@ -1588,7 +1617,7 @@ class JiraMonitorApp:
         btn_frame = ttk.Frame(filter_content)
         btn_frame.pack(side=tk.RIGHT)
         
-        ttk.Button(btn_frame, text="🔄 Yenile", command=self._load_issues, width=12).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="🔄 Yenile", command=self._refresh_issues, width=12).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="⚙️ Ayarlar", command=self._show_settings, width=12).pack(side=tk.LEFT, padx=5)
         
         # Treeview container
@@ -1793,6 +1822,9 @@ class JiraMonitorApp:
         
         jql += " ORDER BY updated DESC"
         
+        # JQL'yi input alanına yaz
+        self.jql_var.set(jql)
+        
         # Show loading
         self.status_bar.config(text="Yükleniyor...")
         self.root.update()
@@ -1953,15 +1985,22 @@ class JiraMonitorApp:
             self._assign_issue(key)
     
     def _assign_issue(self, issue_key):
-        """Round-robin ile sıradaki kullanıcıya ata"""
+        """Round-robin ile sıradaki pasif olmayan kullanıcıya ata"""
         queue = self.config_manager.get("assign_queue", [])
         if not queue:
             messagebox.showwarning("Atama Kuyruğu Boş",
                 "Ayarlar > Atama Kuyruğu bölümünden kullanıcı ekleyin.", parent=self.root)
             return
 
-        idx = self.config_manager.get("assign_queue_index", 0) % len(queue)
-        next_user = queue[idx]
+        # Pasif kullanıcıları filtrele
+        active_queue = [u for u in queue if not u.startswith("!")]
+        if not active_queue:
+            messagebox.showwarning("Aktif Kullanıcı Yok",
+                "Atama kuyruğunda aktif kullanıcı bulunmuyor.", parent=self.root)
+            return
+
+        idx = self.config_manager.get("assign_queue_index", 0) % len(active_queue)
+        next_user = active_queue[idx]
 
         if not messagebox.askyesno("Atama Onayı",
                 f"{issue_key} işi\n\n{next_user}\n\nkullanıcısına atanacak. Onaylıyor musunuz?",
@@ -1973,18 +2012,94 @@ class JiraMonitorApp:
             if "error" in result:
                 self.root.after(0, lambda: messagebox.showerror("Hata", result["error"], parent=self.root))
             else:
-                new_idx = (idx + 1) % len(queue)
+                new_idx = (idx + 1) % len(active_queue)
                 self.config_manager.set("assign_queue_index", new_idx)
                 self.config_manager.save_config(self.config_manager.config)
                 self.root.after(0, lambda: (
                     self.status_bar.config(
-                        text=f"{issue_key} → {next_user} atandı. Sıradaki: {queue[new_idx]}"),
+                        text=f"{issue_key} → {next_user} atandı. Sıradaki: {active_queue[new_idx]}"),
                     self._load_issues()
                 ))
         threading.Thread(target=do, daemon=True).start()
     
+    def _run_jql_query(self):
+        """JQL sorgusunu çalıştır"""
+        jql = self.jql_var.get().strip()
+        if not jql:
+            messagebox.showwarning("JQL Boş", "Lütfen bir JQL sorgu girin.", parent=self.root)
+            return
+        
+        # Filtreleri temizle
+        self.user_var.set("")
+        self.project_var.set("")
+        self.status_var.set("")
+        
+        self.status_bar.config(text="Yükleniyor...")
+        self.root.update()
+        
+        def load():
+            result = self.jira_client.search_issues(jql)
+            
+            if "error" in result:
+                self.root.after(0, lambda: self.status_bar.config(text=f"Hata: {result['error']}"))
+                return
+            
+            issues = result.get("issues", [])
+            self.issues = issues
+            
+            def update_ui():
+                for item in self.tree.get_children():
+                    self.tree.delete(item)
+                
+                for i, issue in enumerate(issues, 1):
+                    fields = issue.get("fields", {})
+                    key = issue.get("key", "")
+                    summary = fields.get("summary", "")
+                    status_name = fields.get("status", {}).get("name", "")
+                    assignee = fields.get("assignee", {}).get("displayName", "")
+                    reporter = fields.get("reporter", {}).get("displayName", "")
+                    project_name = fields.get("project", {}).get("name", "")
+                    updated = fields.get("updated", "")[:19].replace("T", " ") if fields.get("updated") else ""
+                    
+                    elapsed = self._calculate_elapsed_time(fields.get("updated", ""))
+                    
+                    item_id = self.tree.insert("", tk.END, values=(
+                        i, key, summary, status_name, assignee, reporter, project_name, updated, elapsed, ""
+                    ))
+                    
+                    tags = []
+                    if project_name == "EVDBS":
+                        tags.append('evdbs')
+                    elif project_name == "EPDK":
+                        tags.append('epdk')
+                    elif project_name == "Yazılım Destek":
+                        tags.append('destek')
+                    if updated and updated.startswith(datetime.now().strftime("%Y-%m-%d")):
+                        tags.append('today')
+                    if tags:
+                        self.tree.item(item_id, tags=tuple(tags))
+                
+                self.tree.tag_configure('evdbs', background='lightblue')
+                self.tree.tag_configure('epdk', background='navajowhite')
+                self.tree.tag_configure('destek', background='beige')
+                self.tree.tag_configure('today', background='lightgreen')
+                self.status_bar.config(text=f"{len(issues)} adet issue yüklendi. Sorgu: {jql[:50]}...")
+            
+            self.root.after(0, update_ui)
+        
+        threading.Thread(target=load, daemon=True).start()
+    
+    def _refresh_issues(self):
+        """JQL sorgusunu tekrar çalıştır (yenileme için)"""
+        jql = self.jql_var.get().strip()
+        if jql:
+            self._run_jql_query()
+        else:
+            self._load_issues()
+    
     def _on_filter_change(self):
-        """Filtre değişikliği - bildirim verme"""
+        """Filtre değişikliği - JQL alanını temizle"""
+        self.jql_var.set("")
         self._filter_changed = True
         self._load_issues()
     

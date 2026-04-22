@@ -5,7 +5,7 @@ Jira Monitor - Bağımsız Masaüstü Uygulaması
 Python + Tkinter ile hazırlanmıştır.
 """
 
-__version__ = "1.4.5"
+__version__ = "1.4.6"
 
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext

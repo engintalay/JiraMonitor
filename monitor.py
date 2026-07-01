@@ -1999,8 +1999,18 @@ class JiraMonitorApp:
                 "Atama kuyruğunda aktif kullanıcı bulunmuyor.", parent=self.root)
             return
 
-        idx = self.config_manager.get("assign_queue_index", 0) % len(active_queue)
-        next_user = active_queue[idx]
+        # Son atanan kullanıcıyı bul ve ondan sonraki kullanıcıyı seç
+        last_assigned = self.config_manager.get("assign_queue_last_user", "")
+        if last_assigned and last_assigned in active_queue:
+            try:
+                last_idx = active_queue.index(last_assigned)
+                new_idx = (last_idx + 1) % len(active_queue)
+            except ValueError:
+                new_idx = 0
+        else:
+            new_idx = 0
+        
+        next_user = active_queue[new_idx]
 
         if not messagebox.askyesno("Atama Onayı",
                 f"{issue_key} işi\n\n{next_user}\n\nkullanıcısına atanacak. Onaylıyor musunuz?",
@@ -2012,12 +2022,11 @@ class JiraMonitorApp:
             if "error" in result:
                 self.root.after(0, lambda: messagebox.showerror("Hata", result["error"], parent=self.root))
             else:
-                new_idx = (idx + 1) % len(active_queue)
-                self.config_manager.set("assign_queue_index", new_idx)
+                self.config_manager.set("assign_queue_last_user", next_user)
                 self.config_manager.save_config(self.config_manager.config)
                 self.root.after(0, lambda: (
                     self.status_bar.config(
-                        text=f"{issue_key} → {next_user} atandı. Sıradaki: {active_queue[new_idx]}"),
+                        text=f"{issue_key} → {next_user} atandı. Sıradaki: {active_queue[(new_idx + 1) % len(active_queue)]}"),
                     self._load_issues()
                 ))
         threading.Thread(target=do, daemon=True).start()

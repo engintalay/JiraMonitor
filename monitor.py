@@ -1665,6 +1665,12 @@ class JiraMonitorApp:
         self.tree.column("Updated", width=130, anchor='center')
         self.tree.column("Geçen Süre", width=100, anchor='center')
         self.tree.column("Ata", width=50, anchor='center')
+
+        # Satır renk tag'lerini erken tanımla (Windows uyumluluğu)
+        self.tree.tag_configure('evdbs', background='#ADD8E6')
+        self.tree.tag_configure('epdk', background='#FFDEAD')
+        self.tree.tag_configure('destek', background='#F5F5DC')
+        self.tree.tag_configure('today', background='#90EE90')
         
         # Kaydedilmiş column genişliklerini yükle
         saved_widths = self.config_manager.get("column_widths", {})
@@ -1908,6 +1914,12 @@ class JiraMonitorApp:
                 if today_issues:
                     self._show_new_issue_notification(today_issues)
 
+                # Tag renklerini satırlardan önce tanımla (Windows uyumluluğu)
+                self.tree.tag_configure('evdbs', background='#ADD8E6')
+                self.tree.tag_configure('epdk', background='#FFDEAD')
+                self.tree.tag_configure('destek', background='#F5F5DC')
+                self.tree.tag_configure('today', background='#90EE90')
+
                 for i, issue in enumerate(issues, 1):
                     fields = issue.get("fields", {})
                     key = issue.get("key", "")
@@ -1937,10 +1949,6 @@ class JiraMonitorApp:
                     if tags:
                         self.tree.item(item_id, tags=tuple(tags))
 
-                self.tree.tag_configure('evdbs', background='lightblue')
-                self.tree.tag_configure('epdk', background='navajowhite')
-                self.tree.tag_configure('destek', background='beige')
-                self.tree.tag_configure('today', background='lightgreen')
                 self.status_bar.config(text=f"{len(issues)} adet issue yüklendi. Son güncelleme: {datetime.now().strftime('%H:%M:%S')} | Sonraki yenileme: {self.config_manager.get('refresh_interval', 120)}s")
 
             self.root.after(0, update_ui)
@@ -1966,6 +1974,12 @@ class JiraMonitorApp:
         for item in self.tree.get_children():
             self.tree.delete(item)
         
+        # Tag renklerini satırlardan önce tanımla (Windows uyumluluğu)
+        self.tree.tag_configure('evdbs', background='#ADD8E6')
+        self.tree.tag_configure('epdk', background='#FFDEAD')
+        self.tree.tag_configure('destek', background='#F5F5DC')
+        self.tree.tag_configure('today', background='#90EE90')
+
         # Filtrele ve yeniden ekle
         for i, issue in enumerate(self.issues, 1):
             fields = issue.get("fields", {})
@@ -2111,6 +2125,12 @@ class JiraMonitorApp:
                 for item in self.tree.get_children():
                     self.tree.delete(item)
                 
+                # Tag renklerini satırlardan önce tanımla (Windows uyumluluğu)
+                self.tree.tag_configure('evdbs', background='#ADD8E6')
+                self.tree.tag_configure('epdk', background='#FFDEAD')
+                self.tree.tag_configure('destek', background='#F5F5DC')
+                self.tree.tag_configure('today', background='#90EE90')
+
                 for i, issue in enumerate(issues, 1):
                     fields = issue.get("fields", {})
                     key = issue.get("key", "")
@@ -2139,10 +2159,6 @@ class JiraMonitorApp:
                     if tags:
                         self.tree.item(item_id, tags=tuple(tags))
                 
-                self.tree.tag_configure('evdbs', background='lightblue')
-                self.tree.tag_configure('epdk', background='navajowhite')
-                self.tree.tag_configure('destek', background='beige')
-                self.tree.tag_configure('today', background='lightgreen')
                 self.status_bar.config(text=f"{len(issues)} adet issue yüklendi. Sorgu: {jql[:50]}...")
             
             self.root.after(0, update_ui)

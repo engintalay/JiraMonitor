@@ -1752,18 +1752,69 @@ class JiraMonitorApp:
         self.project_combo['values'] = [""] + extra_projects
         self.status_combo['values'] = [""] + extra_statuses
     
+    def _parse_jira_datetime(self, value):
+        """Jira ISO tarihini platform/Python sürümü bağımsız parse et"""
+        if not value:
+            return None
+        import re
+        s = str(value).strip()
+        candidates = [s]
+        # Zulu saati normalize et (kolonlu ve kolonsuz offset adayları)
+        if s.endswith("Z"):
+            base = s[:-1]
+            candidates.append(base + "+00:00")
+            candidates.append(base + "+0000")
+        # Offset'i '+HHMM'/'-HHMM' (kolonsuz) <-> '+HH:MM'/'-HH:MM' (kolonlu) dönüşümleri
+        m = re.search(r'([+-])(\d{2})(\d{2})$', s)
+        if m:
+            candidates.append(s[:-5] + m.group(1) + m.group(2) + ":" + m.group(3))
+        m2 = re.search(r'([+-])(\d{2}):(\d{2})$', s)
+        if m2:
+            candidates.append(s[:-6] + m2.group(1) + m2.group(2) + m2.group(3))
+        # Milisaniye içermeyen offsetli/offsetsiz varyantlar
+        # fromisoformat (Python 3.11+ çoğu formatı kabul eder)
+        for cand in candidates:
+            try:
+                return datetime.fromisoformat(cand)
+            except ValueError:
+                continue
+        # strptime fallback (eski Python sürümleri için)
+        formats = [
+            "%Y-%m-%dT%H:%M:%S.%f%z",
+            "%Y-%m-%dT%H:%M:%S%z",
+            "%Y-%m-%dT%H:%M:%S.%f",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%d %H:%M:%S.%f",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%dT%H:%M",
+            "%Y-%m-%d %H:%M:%S.%f%z",
+            "%Y-%m-%d %H:%M:%S%z",
+            "%Y-%m-%d %H:%M",
+        ]
+        for cand in candidates:
+            for fmt in formats:
+                try:
+                    return datetime.strptime(cand, fmt)
+                except ValueError:
+                    continue
+        return None
+
     def _calculate_elapsed_time(self, updated_str):
         """Geçen süreyi insan anlayacağı dilde hesapla"""
         if not updated_str:
             return "-"
-        
+
         try:
-            updated = datetime.fromisoformat(updated_str.replace("Z", "+00:00"))
+            updated = self._parse_jira_datetime(updated_str)
+            if updated is None:
+                return "-"
             now = datetime.now(updated.tzinfo) if updated.tzinfo else datetime.now()
             delta = now - updated
-            
+
             seconds = int(delta.total_seconds())
-            
+            if seconds < 0:
+                seconds = 0
+
             if seconds < 60:
                 return f"{seconds}s"
             elif seconds < 3600:
@@ -1772,7 +1823,7 @@ class JiraMonitorApp:
                 return f"{seconds // 3600}h"
             else:
                 return f"{seconds // 86400}g"
-        except:
+        except Exception:
             return "-"
     
     def _load_issues(self):

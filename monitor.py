@@ -33,7 +33,23 @@ class JiraClient:
         credentials = f"{self.username}:{self.api_token}".encode('utf-8')
         encoded = base64.b64encode(credentials).decode('utf-8')
         return f"Basic {encoded}"
-    
+
+    @staticmethod
+    def _build_opener():
+        """Ortam değişkenlerindeki proxy ayarlarını (HTTP_PROXY,
+        HTTPS_PROXY, NO_PROXY, ALL_PROXY) dikkate alan opener oluşturur.
+        ProxyHandler bu değişkenleri otomatik okur; NO_PROXY listesindeki
+        host'lar proxy kullanmadan doğrudan bağlanır."""
+        handlers = []
+        try:
+            proxy_handler = urllib.request.ProxyHandler()
+            handlers.append(proxy_handler)
+        except Exception:
+            pass
+        # HTTPS için de aynı proxy handler kullanılacak (ProxyHandler
+        # http/https/... tüm şemaları aynı proxy üzerinden yönlendirir)
+        return urllib.request.build_opener(*handlers)
+
     def _make_request(self, endpoint, params=None):
         """HTTP isteği yap"""
         url = f"{self.server_url}{endpoint}"
@@ -45,7 +61,7 @@ class JiraClient:
             request.add_header("Authorization", self.auth_header)
             request.add_header("Content-Type", "application/json")
             
-            with urllib.request.urlopen(request, timeout=30) as response:
+            with self._build_opener().open(request, timeout=30) as response:
                 return json.loads(response.read().decode('utf-8'))
         except urllib.error.HTTPError as e:
             return {"error": f"HTTP {e.code}: {e.reason}"}
@@ -80,7 +96,7 @@ class JiraClient:
             req = urllib.request.Request(url, data=data, method="POST")
             req.add_header("Authorization", self.auth_header)
             req.add_header("Content-Type", "application/json")
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with self._build_opener().open(req, timeout=30) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             return {"error": f"HTTP {e.code}: {e.reason}"}
@@ -95,7 +111,7 @@ class JiraClient:
             req = urllib.request.Request(url, data=data, method="PUT")
             req.add_header("Authorization", self.auth_header)
             req.add_header("Content-Type", "application/json")
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with self._build_opener().open(req, timeout=30) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             return {"error": f"HTTP {e.code}: {e.reason}"}
@@ -121,7 +137,7 @@ class JiraClient:
             req = urllib.request.Request(url, data=data, method="PUT")
             req.add_header("Authorization", self.auth_header)
             req.add_header("Content-Type", "application/json")
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with self._build_opener().open(req, timeout=30) as resp:
                 return {"ok": True}
         except urllib.error.HTTPError as e:
             return {"error": f"HTTP {e.code}: {e.reason}"}
@@ -136,7 +152,7 @@ class JiraClient:
             req = urllib.request.Request(url, data=data, method="PUT")
             req.add_header("Authorization", self.auth_header)
             req.add_header("Content-Type", "application/json")
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with self._build_opener().open(req, timeout=30) as resp:
                 return {"ok": True}
         except urllib.error.HTTPError as e:
             return {"error": f"HTTP {e.code}: {e.reason}"}
@@ -148,7 +164,7 @@ class JiraClient:
         try:
             req = urllib.request.Request(url)
             req.add_header("Authorization", self.auth_header)
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with self._build_opener().open(req, timeout=60) as resp:
                 with open(dest_path, "wb") as f:
                     f.write(resp.read())
             return None
@@ -167,7 +183,7 @@ class JiraClient:
             req = urllib.request.Request(url, data=data, method="POST")
             req.add_header("Authorization", self.auth_header)
             req.add_header("Content-Type", "application/json")
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with self._build_opener().open(req, timeout=30) as resp:
                 return {"ok": True}
         except urllib.error.HTTPError as e:
             return {"error": f"HTTP {e.code}: {e.reason}"}
